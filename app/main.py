@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict
+from typing import Any, AsyncGenerator, Dict, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,8 +36,8 @@ class JobResponse(BaseModel):
     id: str
     url: str
     status: str
-    error: str | None
-    playlist_name: str | None
+    error: Optional[str]
+    playlist_name: Optional[str]
     tracks: list[dict[str, Any]]
     logs: list[str]
 
