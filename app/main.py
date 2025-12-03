@@ -27,10 +27,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-static_dir = Path(__file__).resolve().parent.parent / "frontend"
-if static_dir.exists():
-    app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
-
 
 class JobResponse(BaseModel):
     id: str
@@ -140,6 +136,12 @@ async def download_config_file() -> FileResponse:
 @app.exception_handler(Exception)
 async def on_error(_: Request, exc: Exception):  # noqa: ANN001
     return JSONResponse(status_code=500, content={"message": str(exc)})
+
+
+static_dir = Path(__file__).resolve().parent.parent / "frontend"
+if static_dir.exists():
+    # Mount after API routes so /api/* stays routed to FastAPI
+    app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
 
 
 if __name__ == "__main__":
