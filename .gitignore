@@ -81,6 +81,9 @@ out
 # Nuxt.js build / generate output
 .nuxt
 dist
+downloads/
+__pycache__/
+*.pyc
 
 # Gatsby files
 .cache/

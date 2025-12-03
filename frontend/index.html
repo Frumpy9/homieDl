@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SpotDL Web Helper</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header>
+        <h1>SpotDL Web Helper</h1>
+        <p>Paste a Spotify track, album, playlist, or user URL and monitor downloads.</p>
+      </header>
+
+      <section class="card">
+        <h2>New download</h2>
+        <form id="job-form">
+          <label for="url">Spotify URL</label>
+          <input id="url" name="url" type="text" placeholder="https://open.spotify.com/..." required />
+          <button type="submit">Start download</button>
+        </form>
+        <div class="config" id="config"></div>
+      </section>
+
+      <section class="card">
+        <div class="card-header">
+          <h2>Jobs</h2>
+          <button id="refresh">Refresh</button>
+        </div>
+        <div id="jobs"></div>
+      </section>
+    </div>
+
+    <script src="main.js"></script>
+  </body>
+</html>
