@@ -102,8 +102,8 @@ async def job_events(job_id: str) -> StreamingResponse:
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-def serialize_job(job: Job) -> JobResponse:
-    return JobResponse(
+def serialize_job(job: Job) -> dict[str, Any]:
+    job_response = JobResponse(
         id=job.id,
         url=job.url,
         status=job.status.value,
@@ -122,6 +122,9 @@ def serialize_job(job: Job) -> JobResponse:
         ],
         logs=job.logs,
     )
+
+    # Returning a plain dict keeps the data JSON-serializable for SSE events
+    return job_response.dict()
 
 
 def format_sse(payload: Dict[str, Any]) -> bytes:
