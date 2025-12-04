@@ -302,12 +302,21 @@ def download_tracks(
     downloader: yt_dlp.YoutubeDL,
     include_album: bool,
     dry_run: bool,
-    search_prefix: str,
     search_provider: str,
 ) -> List[Path]:
     downloaded_files: List[Path] = []
 
-    ytmusic_client = YTMusic() if search_provider == "youtube-music" else None
+    if search_provider == "youtube-music":
+        try:
+            ytmusic_client = YTMusic()
+        except Exception as exc:  # pragma: no cover - runtime environment difference
+            print(
+                "YouTube Music client could not be initialized; falling back to regular "
+                f"YouTube search. ({exc})"
+            )
+            ytmusic_client = None
+    else:
+        ytmusic_client = None
 
     for track in tracks:
         terms = track.build_terms(include_album=include_album)
@@ -315,8 +324,9 @@ def download_tracks(
             print("Skipping row with missing track and artist info.")
             continue
 
-        query = f"{search_prefix}:{terms}"
+        query = f"ytsearch5:{terms}"
         display = query
+
         if ytmusic_client:
             url, matched_title = search_ytmusic(ytmusic_client, terms)
             if url:
@@ -386,8 +396,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("No tracks found in CSV. Nothing to download.")
         return 0
 
-    search_prefix = "ytsearch5"
-
     print(
         f"Found {len(tracks)} tracks. Output directory: {args.output.resolve()}"
     )
@@ -408,7 +416,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         downloader,
         include_album=args.include_album,
         dry_run=args.dry_run,
-        search_prefix=search_prefix,
         search_provider=args.search_provider,
     )
 

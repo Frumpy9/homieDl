@@ -52,9 +52,10 @@ dry_run = false                 # Only print queries when true
 ## How it works
 1. Each CSV row is converted into a search query composed of the **track name and artist name**
    (album is optional). The term `audio` is appended to bias results toward official audio.
-2. The tool asks **YouTube Music** for song results using `ytmusicapi`; if nothing is found,
-   it falls back to a regular YouTube `ytsearch5:<query>` query. Common "music video" markers
-   are filtered out so downloads stay on audio-first results.
+2. The tool asks **YouTube Music** for song results using `ytmusicapi`; if nothing is found or
+   if the Music client cannot initialize, it falls back to a regular YouTube `ytsearch5:<query>`
+   query. Common "music video" markers are filtered out so downloads stay on audio-first
+   results.
 3. The best audio stream is downloaded and converted to MP3 via FFmpeg by default.
 4. Metadata (title, artist, album when available) and the YouTube Music thumbnail are embedded
    into the output file so your library software can identify each track.
