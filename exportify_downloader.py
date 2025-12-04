@@ -344,18 +344,29 @@ def download_tracks(
             info = downloader.extract_info(query, download=True)
             # extract_info may return a playlist of entries. Each entry has already
             # gone through post-processing, so capture their final filepaths when
-            # available.
-            if info:
-                entries = info.get("entries") if isinstance(info, dict) else None
+            # available. Some yt-dlp versions can return non-dict objects (e.g.,
+            # plain strings) on failure; guard these cases so we do not crash
+            # when accessing `.get`.
+            if not info:
+                continue
+
+            def record_filepath(entry: dict) -> None:
+                filepath = entry.get("filepath") or entry.get("_filename")
+                if filepath:
+                    downloaded_files.append(Path(filepath))
+
+            if isinstance(info, dict):
+                entries = info.get("entries")
                 if entries:
                     for entry in entries:
-                        filepath = entry.get("filepath") or entry.get("_filename")
-                        if filepath:
-                            downloaded_files.append(Path(filepath))
+                        if isinstance(entry, dict):
+                            record_filepath(entry)
                 else:
-                    filepath = info.get("filepath") or info.get("_filename")
-                    if filepath:
-                        downloaded_files.append(Path(filepath))
+                    record_filepath(info)
+            elif isinstance(info, list):
+                for entry in info:
+                    if isinstance(entry, dict):
+                        record_filepath(entry)
         except yt_dlp.utils.DownloadError as exc:  # type: ignore[attr-defined]
             print(f"Failed to download {query}: {exc}")
 
