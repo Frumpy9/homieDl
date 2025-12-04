@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
+import concurrent.futures
 
 from spotdl import Spotdl
 from spotdl.types.song import Song
@@ -160,6 +160,7 @@ def download_job(job: Job, config: AppConfig, event_callback) -> None:
         track_id = build_track_id(song)
         track = job.tracks[track_id]
         try:
+            track.status = "downloading"
             job.add_log(f"Downloading {track.title}...")
             logger.info(
                 "Job %s: downloading track %s (%s)",
@@ -168,7 +169,17 @@ def download_job(job: Job, config: AppConfig, event_callback) -> None:
                 track.title,
             )
             event_callback()
-            result_song, downloaded_path = spotdl_client.download(song)
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(spotdl_client.download, song)
+                try:
+                    result_song, downloaded_path = future.result(timeout=config.track_download_timeout)
+                except concurrent.futures.TimeoutError as exc:
+                    future.cancel()
+                    raise DownloadError(
+                        f"Timed out after {config.track_download_timeout}s while downloading"
+                    ) from exc
+
             target_path = downloaded_path or planned_output_path(song, config)
             track.path = target_path
             track.status = "downloaded"

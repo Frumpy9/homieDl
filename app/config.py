@@ -19,6 +19,7 @@ class AppConfig:
     threads: int = 4
     spotify_client_id: Optional[str] = None
     spotify_client_secret: Optional[str] = None
+    track_download_timeout: int = 300
 
     @property
     def library_dir(self) -> Path:
@@ -42,6 +43,7 @@ class AppConfig:
                 threads=int(raw.get("threads", 4)),
                 spotify_client_id=raw.get("spotify_client_id"),
                 spotify_client_secret=raw.get("spotify_client_secret"),
+                track_download_timeout=int(raw.get("track_download_timeout", 300)),
             )
         config = AppConfig()
         config.save(path)
@@ -60,6 +62,7 @@ class AppConfig:
                     "threads": self.threads,
                     "spotify_client_id": self.spotify_client_id,
                     "spotify_client_secret": self.spotify_client_secret,
+                    "track_download_timeout": self.track_download_timeout,
                 },
                 handle,
                 indent=2,

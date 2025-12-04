@@ -5,6 +5,7 @@
   "output_template": "{artists} - {title}.{ext}",
   "overwrite_strategy": "skip",
   "threads": 4,
+  "track_download_timeout": 300,
   "spotify_client_id": "YOUR_SPOTIFY_CLIENT_ID",
   "spotify_client_secret": "YOUR_SPOTIFY_CLIENT_SECRET"
 }

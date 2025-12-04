@@ -13,6 +13,7 @@ async function fetchConfig() {
     <div><strong>Template</strong>: ${data.output_template}</div>
     <div><strong>Overwrite</strong>: ${data.overwrite_strategy}</div>
     <div><strong>Threads</strong>: ${data.threads}</div>
+    <div><strong>Track timeout (s)</strong>: ${data.track_download_timeout}</div>
   `;
 }
 

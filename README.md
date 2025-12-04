@@ -7,14 +7,14 @@ A small FastAPI + vanilla JS interface for running [spotDL](https://github.com/s
 - Per-track status and live logs streamed to the browser.
 - Shared library output to avoid duplicate downloads across playlists.
 - Playlist folders with `playlist.m3u` and hardlinks/symlinks to library files.
-- Configurable output paths, filename template, overwrite behavior, and thread count via `config.json`.
+- Configurable output paths, filename template, overwrite behavior, thread count, and per-track timeout via `config.json`.
 
 ## Setup
 1. Install dependencies (Python 3.9+). The app pins `spotdl==4.3.1`, the latest version currently available on PyPI:
    ```bash
    pip install -r requirements.txt
    ```
-2. Update `config.json` with your desired output directory and Spotify client credentials. Public playlists work best with credentials, and **user-library URLs require them**; without credentials those jobs will fail early with a clear error. Ensure `ffmpeg` is on your PATH.
+2. Update `config.json` with your desired output directory and Spotify client credentials. Public playlists work best with credentials, and **user-library URLs require them**; without credentials those jobs will fail early with a clear error. Ensure `ffmpeg` is on your PATH. The `track_download_timeout` value (seconds) stops any single track from hanging indefinitely.
 3. Run the server:
    ```bash
    uvicorn app.main:app --host 0.0.0.0 --port 8000

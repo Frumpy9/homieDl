@@ -56,6 +56,7 @@ class ConfigResponse(BaseModel):
     output_template: str
     threads: int
     overwrite_strategy: str
+    track_download_timeout: int
 
 
 @app.get("/api/config", response_model=ConfigResponse)
@@ -67,6 +68,7 @@ async def get_config() -> ConfigResponse:
         output_template=config.output_template,
         threads=config.threads,
         overwrite_strategy=config.overwrite_strategy,
+        track_download_timeout=config.track_download_timeout,
     )
 
 
