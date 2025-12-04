@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
@@ -14,6 +15,9 @@ from spotipy.oauth2 import SpotifyClientCredentials
 
 from .config import AppConfig
 from .models import Job, JobStatus, TrackState
+
+
+logger = logging.getLogger(__name__)
 
 
 class DownloadError(Exception):
@@ -57,8 +61,14 @@ def create_spotdl(config: AppConfig) -> Spotdl:
     )
 
 
+def get_artist_name(artist: object) -> str:
+    # SpotDL typically returns Artist objects, but be defensive if strings appear
+    return getattr(artist, "name", None) or str(artist)
+
+
 def build_track_id(song: Song) -> str:
-    return song.url or f"{song.artists[0].name}-{song.name}"
+    primary_artist = song.artists[0] if song.artists else "unknown"
+    return song.url or f"{get_artist_name(primary_artist)}-{song.name}"
 
 
 def requires_user_auth(url: str) -> bool:
@@ -99,6 +109,7 @@ def sync_playlist_manifest(playlist_name: str, tracks: Iterable[TrackState], con
 
 
 def download_job(job: Job, config: AppConfig, event_callback) -> None:
+    logger.info("Job %s: starting download pipeline for %s", job.id, job.url)
     config.ensure_paths()
 
     spotdl_client = create_spotdl(config)
@@ -111,6 +122,7 @@ def download_job(job: Job, config: AppConfig, event_callback) -> None:
         )
 
     job.playlist_name = get_playlist_name(spotify_client, job.url)
+    logger.info("Job %s: resolved playlist name %s", job.id, job.playlist_name)
 
     job.status = JobStatus.running
     job.add_log("Starting search...")
@@ -120,14 +132,25 @@ def download_job(job: Job, config: AppConfig, event_callback) -> None:
     if not songs:
         raise DownloadError("No tracks resolved from the provided URL")
 
+    logger.info("Job %s: resolved %s songs", job.id, len(songs))
+    for idx, song in enumerate(songs):
+        logger.info(
+            "Job %s: song[%s] title=%s artists=%s url=%s",
+            job.id,
+            idx,
+            getattr(song, "name", song),
+            [get_artist_name(a) for a in getattr(song, "artists", [])],
+            getattr(song, "url", None),
+        )
+
     for song in songs:
         track_id = build_track_id(song)
         track_state = job.tracks.setdefault(
             track_id,
             TrackState(
                 id=track_id,
-                title=song.name,
-                artist=", ".join(artist.name for artist in song.artists),
+                title=getattr(song, "name", str(song)),
+                artist=", ".join(get_artist_name(artist) for artist in getattr(song, "artists", [])),
             ),
         )
 
@@ -138,18 +161,28 @@ def download_job(job: Job, config: AppConfig, event_callback) -> None:
         track = job.tracks[track_id]
         try:
             job.add_log(f"Downloading {track.title}...")
+            logger.info(
+                "Job %s: downloading track %s (%s)",
+                job.id,
+                track.id,
+                track.title,
+            )
             event_callback()
             result_song, downloaded_path = spotdl_client.download(song)
             target_path = downloaded_path or planned_output_path(song, config)
             track.path = target_path
             track.status = "downloaded"
             job.add_log(f"Finished {track.title}")
+            logger.info(
+                "Job %s: finished track %s stored at %s", job.id, track.id, target_path
+            )
             if job.playlist_name:
                 sync_playlist_manifest(job.playlist_name, job.tracks.values(), config)
         except Exception as exc:  # noqa: BLE001
             track.status = "error"
             track.message = str(exc)
             job.add_log(f"Failed {track.title}: {exc}")
+            logger.exception("Job %s: failed downloading track %s", job.id, track.id)
             event_callback()
 
     if all(track.status == "downloaded" for track in job.tracks.values()):
@@ -157,6 +190,7 @@ def download_job(job: Job, config: AppConfig, event_callback) -> None:
     else:
         job.status = JobStatus.failed
         job.error = "Some tracks failed. Check logs."
+        logger.error("Job %s: completed with errors", job.id)
     event_callback()
 
 
@@ -167,4 +201,5 @@ def run_job(job: Job, config: AppConfig, event_callback) -> None:
         job.status = JobStatus.failed
         job.error = str(exc)
         job.add_log(f"Job failed: {exc}")
+        logger.exception("Job %s: fatal error %s", job.id, exc)
         event_callback()

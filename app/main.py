@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, Optional
 
@@ -13,6 +14,11 @@ from pydantic import BaseModel
 from .config import AppConfig, CONFIG_PATH
 from .job_manager import JobManager
 from .models import CreateJobRequest, Job
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
+)
 
 app = FastAPI(title="SpotDL Web Helper", version="0.1.0")
 

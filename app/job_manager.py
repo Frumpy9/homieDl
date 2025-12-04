@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from typing import Dict, Optional
 
@@ -15,6 +16,7 @@ class JobManager:
         self.jobs: Dict[str, Job] = {}
         self._event_subscribers: Dict[str, list[asyncio.Queue[str]]] = {}
         self._lock = asyncio.Lock()
+        self.logger = logging.getLogger(self.__class__.__name__)
 
     def _broadcast(self, job_id: str) -> None:
         for queue in self._event_subscribers.get(job_id, []):
@@ -35,6 +37,8 @@ class JobManager:
         job_id = str(uuid.uuid4())
         job = Job(id=job_id, url=payload.url)
         self.jobs[job_id] = job
+
+        self.logger.info("Created job %s for url %s", job_id, payload.url)
 
         loop = asyncio.get_running_loop()
         loop.run_in_executor(None, run_job, job, self.config, lambda: self._broadcast(job_id))
