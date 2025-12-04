@@ -146,6 +146,7 @@ def download_job(job: Job, config: AppConfig, event_callback) -> None:
 
     logger.info("Job %s: spotdl resolved %s songs", job.id, len(songs))
 
+    track_order = []
     for song in songs:
         track_id = build_track_id(song)
         track = job.tracks.setdefault(
@@ -156,28 +157,58 @@ def download_job(job: Job, config: AppConfig, event_callback) -> None:
                 artist=", ".join(get_artist_name(artist) for artist in getattr(song, "artists", [])),
             ),
         )
-        track.status = "downloading"
-        job.add_log(f"Downloading {track.title}...")
-        event_callback()
+        track.status = "pending"
+        track_order.append((track_id, song))
 
-        try:
-            result_song, downloaded_path = spotdl_client.download(song)
-        except Exception as exc:  # noqa: BLE001
+    for track_id, _ in track_order:
+        job.tracks[track_id].status = "downloading"
+
+    job.add_log(f"Downloading {len(track_order)} track(s)...")
+    event_callback()
+
+    try:
+        results = spotdl_client.download_songs([song for _, song in track_order])
+    except Exception as exc:  # noqa: BLE001
+        for track_id, _ in track_order:
+            track = job.tracks[track_id]
             track.status = "failed"
-            job.add_log(f"Failed {track.title}: {exc}")
-            logger.exception(
-                "Job %s: failed downloading track %s", job.id, getattr(song, "url", song)
-            )
+            track.message = str(exc)
+        job.status = JobStatus.failed
+        job.error = str(exc)
+        job.add_log(f"Job failed: {exc}")
+        logger.exception("Job %s: failed downloading songs", job.id)
+        event_callback()
+        return
+
+    for (track_id, _song), result in zip(track_order, results):
+        track = job.tracks[track_id]
+        if not isinstance(result, tuple) or len(result) != 2:
+            track.status = "failed"
+            track.message = "Unexpected download result"
+            job.add_log(f"Failed {track.title}: unexpected result from downloader")
+            logger.error("Job %s: unexpected result for track %s -> %s", job.id, track_id, result)
+            event_callback()
+            continue
+
+        result_song, downloaded_path = result
+
+        if downloaded_path is None:
+            track.status = "failed"
+            track.message = "No file path returned"
+            job.add_log(f"Failed {track.title}: no file path returned")
+            logger.error("Job %s: no path returned for track %s", job.id, track_id)
             event_callback()
             continue
 
         target_path = downloaded_path or planned_output_path(result_song, config)
         track.path = target_path
         track.status = "downloaded"
+        track.message = None
         job.add_log(f"Finished {track.title}")
         logger.info("Job %s: finished track %s stored at %s", job.id, track.id, target_path)
         if job.playlist_name:
             sync_playlist_manifest(job.playlist_name, job.tracks.values(), config)
+        event_callback()
 
     if any(track.status == "downloaded" for track in job.tracks.values()):
         job.status = JobStatus.completed
