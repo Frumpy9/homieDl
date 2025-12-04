@@ -23,6 +23,8 @@ Key options:
 - `--output`: Base directory for downloads (defaults to `downloads`). A subfolder with the
   playlist name is created automatically (e.g., `downloads/<playlist-name>/`).
 - `--limit`: Only process the first N tracks from the CSV.
+- `--max-downloads-per-hour`: Enforce a rolling cap on how many tracks start
+  downloading each hour (default: 100). Set to `0` to disable.
 - `--no-album`: Build search queries without the album name.
 - `--search-provider`: Choose YouTube Music (default) or regular YouTube search.
 - `--audio-format`: Audio format passed to FFmpeg (default: `mp3`). Use `best` to keep the
@@ -48,6 +50,7 @@ audio_format = "mp3"            # Use "best" to keep the source format
 audio_quality = "192"           # FFmpeg bitrate when converting
 search_provider = "youtube-music"  # Or "youtube"
 dry_run = false                 # Only print queries when true
+max_downloads_per_hour = 100    # Rate limit to avoid throttling (0 disables)
 ```
 
 ## How it works

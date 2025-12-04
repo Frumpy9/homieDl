@@ -13,6 +13,8 @@ from __future__ import annotations
 import argparse
 import csv
 import sys
+import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
@@ -51,6 +53,36 @@ class Track:
         # Using "audio" at the end helps yt-dlp avoid grabbing music videos.
         return " ".join(parts + ["audio"])
 
+
+class RateLimiter:
+    """Allow only a fixed number of events within a rolling time window."""
+
+    def __init__(self, max_items: int, window_seconds: int) -> None:
+        self.max_items = max_items
+        self.window_seconds = window_seconds
+        self.timestamps: deque[float] = deque()
+
+    def wait_for_slot(self) -> None:
+        """Block until another download attempt fits within the rate limit."""
+
+        while True:
+            now = time.monotonic()
+            window_start = now - self.window_seconds
+            while self.timestamps and self.timestamps[0] < window_start:
+                self.timestamps.popleft()
+
+            if len(self.timestamps) < self.max_items:
+                self.timestamps.append(now)
+                return
+
+            sleep_for = self.timestamps[0] + self.window_seconds - now
+            if sleep_for > 0:
+                minutes, seconds = divmod(int(sleep_for + 0.999), 60)
+                print(
+                    f"Rate limit reached ({self.max_items} downloads per hour). "
+                    f"Pausing for {minutes}m {seconds}s to avoid throttling."
+                )
+                time.sleep(sleep_for)
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -124,6 +156,15 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
             "YouTube Music API; 'youtube' uses standard YouTube search queries."
         ),
     )
+    parser.add_argument(
+        "--max-downloads-per-hour",
+        type=int,
+        default=None,
+        help=(
+            "Limit how many tracks will start downloading per hour (default: 100). "
+            "Use 0 to disable the rate limit."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -153,6 +194,7 @@ def resolve_settings(args: argparse.Namespace) -> argparse.Namespace:
         "audio_quality": "192",
         "dry_run": False,
         "search_provider": "youtube-music",
+        "max_downloads_per_hour": 100,
     }
 
     # Flatten simple config keys
@@ -166,6 +208,7 @@ def resolve_settings(args: argparse.Namespace) -> argparse.Namespace:
         "audio_quality": config_section.get("audio_quality"),
         "dry_run": config_section.get("dry_run"),
         "search_provider": config_section.get("search_provider"),
+        "max_downloads_per_hour": config_section.get("max_downloads_per_hour"),
     }
 
     resolved = argparse.Namespace()
@@ -191,6 +234,17 @@ def resolve_settings(args: argparse.Namespace) -> argparse.Namespace:
         or config_settings["search_provider"]
         or defaults["search_provider"]
     )
+    resolved.max_downloads_per_hour = (
+        args.max_downloads_per_hour
+        if args.max_downloads_per_hour is not None
+        else (
+            config_settings["max_downloads_per_hour"]
+            if config_settings["max_downloads_per_hour"] is not None
+            else defaults["max_downloads_per_hour"]
+        )
+    )
+    if resolved.max_downloads_per_hour is not None and resolved.max_downloads_per_hour <= 0:
+        resolved.max_downloads_per_hour = None
     resolved.config = args.config
     return resolved
 
@@ -295,6 +349,7 @@ def download_tracks(
     include_album: bool,
     dry_run: bool,
     search_provider: str,
+    rate_limiter: Optional[RateLimiter],
 ) -> List[Path]:
     downloaded_files: List[Path] = []
 
@@ -328,6 +383,9 @@ def download_tracks(
         print(f"Searching and downloading: {display}")
         if dry_run:
             continue
+
+        if rate_limiter:
+            rate_limiter.wait_for_slot()
 
         try:
             info = downloader.extract_info(query, download=True)
@@ -429,6 +487,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         include_album=args.include_album,
         dry_run=args.dry_run,
         search_provider=args.search_provider,
+        rate_limiter=RateLimiter(args.max_downloads_per_hour, 3600)
+        if args.max_downloads_per_hour
+        else None,
     )
 
     for file_path in extracted_files:
