@@ -15,7 +15,7 @@ import csv
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Tuple
 
 try:
     import tomllib  # Python 3.11+
@@ -23,6 +23,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for older Pythons
     import tomli as tomllib
 
 import yt_dlp
+from ytmusicapi import YTMusic
 
 
 @dataclass
@@ -33,8 +34,8 @@ class Track:
     artists: str
     album: str
 
-    def build_query(self, include_album: bool, search_prefix: str) -> str:
-        """Build a search query that always includes title and artist.
+    def build_terms(self, include_album: bool) -> str:
+        """Build raw search terms that always include title and artist.
 
         Album stays optional, but we always lead with track + artist and append
         the word "audio" to bias results away from music videos.
@@ -48,8 +49,7 @@ class Track:
             parts.append(self.album)
 
         # Using "audio" at the end helps yt-dlp avoid grabbing music videos.
-        query = " ".join(parts + ["audio"])
-        return f"{search_prefix}:{query}"
+        return " ".join(parts + ["audio"])
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -120,9 +120,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         choices=["youtube-music", "youtube"],
         default=None,
         help=(
-            "Where to search for tracks. 'youtube-music' uses yt-dlp's ytmusicsearch "
-            "and embeds metadata from the YouTube Music result; 'youtube' falls back "
-            "to the regular YouTube search."
+            "Where to search for tracks. 'youtube-music' resolves songs through the "
+            "YouTube Music API; 'youtube' uses standard YouTube search queries."
         ),
     )
     return parser.parse_args(argv)
@@ -277,22 +276,54 @@ def build_downloader(
     return yt_dlp.YoutubeDL(ydl_opts)
 
 
+def search_ytmusic(ytmusic: YTMusic, terms: str) -> Tuple[Optional[str], Optional[str]]:
+    """Return a YouTube Music URL and title if a song match is found."""
+
+    if not terms:
+        return None, None
+
+    try:
+        results = ytmusic.search(terms, filter="songs", limit=5)
+    except Exception as exc:  # pragma: no cover - network/HTTP handled at runtime
+        print(f"YouTube Music search failed for '{terms}': {exc}")
+        return None, None
+
+    for entry in results:
+        video_id = entry.get("videoId")
+        title = entry.get("title")
+        if video_id:
+            return f"https://music.youtube.com/watch?v={video_id}", title
+
+    return None, None
+
+
 def download_tracks(
     tracks: Iterable[Track],
     downloader: yt_dlp.YoutubeDL,
     include_album: bool,
     dry_run: bool,
     search_prefix: str,
+    search_provider: str,
 ) -> List[Path]:
     downloaded_files: List[Path] = []
 
+    ytmusic_client = YTMusic() if search_provider == "youtube-music" else None
+
     for track in tracks:
-        query = track.build_query(include_album=include_album, search_prefix=search_prefix)
-        if not query:
+        terms = track.build_terms(include_album=include_album)
+        if not terms:
             print("Skipping row with missing track and artist info.")
             continue
 
-        print(f"Searching and downloading: {query}")
+        query = f"{search_prefix}:{terms}"
+        display = query
+        if ytmusic_client:
+            url, matched_title = search_ytmusic(ytmusic_client, terms)
+            if url:
+                query = url
+                display = matched_title or url
+
+        print(f"Searching and downloading: {display}")
         if dry_run:
             continue
 
@@ -355,7 +386,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("No tracks found in CSV. Nothing to download.")
         return 0
 
-    search_prefix = "ytmusicsearch5" if args.search_provider == "youtube-music" else "ytsearch5"
+    search_prefix = "ytsearch5"
 
     print(
         f"Found {len(tracks)} tracks. Output directory: {args.output.resolve()}"
@@ -378,6 +409,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         include_album=args.include_album,
         dry_run=args.dry_run,
         search_prefix=search_prefix,
+        search_provider=args.search_provider,
     )
 
     for file_path in extracted_files:
