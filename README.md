@@ -61,8 +61,7 @@ dry_run = false                 # Only print queries when true
 5. After the downloads finish, an M3U playlist file (named after the CSV, e.g., `playlist.m3u`)
    is written to the output directory with relative paths to the downloaded tracks so you can
    load the set on a player that supports playlists.
-6. Each saved file is named `Track Name - Artist.ext` using the CSV values to make browsing the
-   downloaded folder predictable.
+6. Files are saved with yt-dlp's default title-based naming in the chosen output directory.
 
 ## Example
 ```
