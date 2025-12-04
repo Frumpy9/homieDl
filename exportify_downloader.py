@@ -416,8 +416,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     downloaded_files: List[Path] = []
 
     def progress_hook(status):
+        if not isinstance(status, dict):
+            return
+
         if status.get("status") == "finished":
-            info = status.get("info_dict") or {}
+            info = status.get("info_dict") if isinstance(status.get("info_dict"), dict) else {}
             filepath = info.get("filepath") or status.get("filename")
             if filepath:
                 downloaded_files.append(Path(filepath))
