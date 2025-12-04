@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -264,6 +265,13 @@ def build_downloader(
     return yt_dlp.YoutubeDL(ydl_opts)
 
 
+def sanitize_filename_component(text: str) -> str:
+    """Return a filesystem-safe filename component."""
+
+    sanitized = re.sub(r"[\\/*?:\"<>|]", "_", text).strip()
+    return sanitized
+
+
 def search_ytmusic(ytmusic: YTMusic, terms: str) -> Tuple[Optional[str], Optional[str]]:
     """Return a YouTube Music URL and title if a song match is found."""
 
@@ -288,6 +296,7 @@ def search_ytmusic(ytmusic: YTMusic, terms: str) -> Tuple[Optional[str], Optiona
 def download_tracks(
     tracks: Iterable[Track],
     downloader: yt_dlp.YoutubeDL,
+    output_dir: Path,
     include_album: bool,
     dry_run: bool,
     search_provider: str,
@@ -320,6 +329,12 @@ def download_tracks(
             if url:
                 query = url
                 display = matched_title or url
+
+        base_title = sanitize_filename_component(track.title or "")
+        base_artist = sanitize_filename_component(track.artists or "")
+        parts = [part for part in (base_title, base_artist) if part]
+        filename_base = " - ".join(parts) if parts else sanitize_filename_component(display)
+        downloader.params["outtmpl"] = str(output_dir / f"{filename_base}.%(ext)s")
 
         print(f"Searching and downloading: {display}")
         if dry_run:
@@ -402,6 +417,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     extracted_files = download_tracks(
         tracks,
         downloader,
+        args.output,
         include_album=args.include_album,
         dry_run=args.dry_run,
         search_provider=args.search_provider,
