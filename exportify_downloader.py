@@ -2,6 +2,7 @@
 
 Usage example:
     python exportify_downloader.py playlist.csv --output downloads
+    python exportify_downloader.py playlist1.csv playlist2.csv --output downloads
 
 The script reads the Exportify CSV, builds YouTube search queries using the
 artist and track names, and downloads the best audio stream (optionally
@@ -118,10 +119,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         )
     )
     parser.add_argument(
-        "csv_file",
+        "csv_files",
         type=Path,
-        nargs="?",
-        help="Path to the Exportify CSV file (can be set in config)",
+        nargs="*",
+        help="One or more Exportify CSV files to process (can be set in config)",
     )
     parser.add_argument(
         "--config",
@@ -213,6 +214,17 @@ def load_config(config_path: Path) -> dict:
 def resolve_settings(args: argparse.Namespace) -> argparse.Namespace:
     """Merge CLI args with config values, preferring CLI when provided."""
 
+    def normalize_csv_inputs(value) -> List[Path]:
+        if not value:
+            return []
+        if isinstance(value, Path):
+            return [value]
+        if isinstance(value, (str, bytes)):
+            return [Path(value)]
+        if isinstance(value, Iterable):
+            return [Path(item) for item in value if item]
+        return []
+
     config = load_config(args.config)
 
     defaults = {
@@ -230,6 +242,7 @@ def resolve_settings(args: argparse.Namespace) -> argparse.Namespace:
     config_section = config.get("exportify_downloader", {}) if isinstance(config, dict) else {}
     config_settings = {
         "csv_file": config_section.get("csv_file"),
+        "csv_files": config_section.get("csv_files"),
         "output": Path(config_section["output"]) if config_section.get("output") else None,
         "limit": config_section.get("limit"),
         "include_album": config_section.get("include_album"),
@@ -241,7 +254,12 @@ def resolve_settings(args: argparse.Namespace) -> argparse.Namespace:
     }
 
     resolved = argparse.Namespace()
-    resolved.csv_file = args.csv_file or config_settings["csv_file"]
+    cli_csvs = normalize_csv_inputs(args.csv_files)
+    config_csvs = normalize_csv_inputs(config_settings["csv_files"]) or normalize_csv_inputs(
+        config_settings["csv_file"]
+    )
+    resolved.csv_files = cli_csvs or config_csvs
+    resolved.csv_file = resolved.csv_files[0] if resolved.csv_files else None
     resolved.output = args.output or config_settings["output"] or defaults["output"]
     resolved.limit = args.limit if args.limit is not None else config_settings["limit"]
     if resolved.limit == 0:
@@ -489,16 +507,11 @@ def write_m3u_playlist(playlist_path: Path, downloaded_files: List[Path], output
     print(f"Created playlist: {playlist_path}")
 
 
-def run_downloader(
-    args: argparse.Namespace, progress_callback: Optional[Callable[[str, int, int, str], None]] = None
+def run_downloader_for_csv(
+    csv_path: Path, args: argparse.Namespace, progress_callback: Optional[Callable[[str, int, int, str], None]] = None
 ) -> int:
-    """Execute the downloader with already-resolved settings."""
+    """Execute the downloader for a single CSV file."""
 
-    if not args.csv_file:
-        print("No CSV file provided via CLI or config.", file=sys.stderr)
-        return 1
-
-    csv_path = Path(args.csv_file)
     if not csv_path.exists():
         print(f"CSV file not found: {csv_path}", file=sys.stderr)
         return 1
@@ -550,6 +563,28 @@ def run_downloader(
     return 0
 
 
+def run_downloader(
+    args: argparse.Namespace, progress_callback: Optional[Callable[[str, int, int, str], None]] = None
+) -> int:
+    """Execute the downloader with already-resolved settings."""
+
+    if not args.csv_files:
+        print("No CSV file provided via CLI or config.", file=sys.stderr)
+        return 1
+
+    status = 0
+    total_files = len(args.csv_files)
+    for file_index, csv_path in enumerate(args.csv_files, start=1):
+        print(f"\nProcessing CSV {file_index}/{total_files}: {csv_path}")
+        if progress_callback:
+            progress_callback("file", file_index, total_files, str(csv_path))
+        result = run_downloader_for_csv(csv_path, args, progress_callback=progress_callback)
+        if result != 0:
+            status = result
+
+    return status
+
+
 def launch_gui(defaults: argparse.Namespace) -> None:
     """Launch a lightweight Tkinter GUI for selecting downloader options."""
 
@@ -557,7 +592,10 @@ def launch_gui(defaults: argparse.Namespace) -> None:
     root.title("Exportify YouTube Music Downloader")
     root.geometry("700x500")
 
-    csv_var = tk.StringVar(value=str(defaults.csv_file or ""))
+    csv_paths: List[str] = [str(path) for path in getattr(defaults, "csv_files", [])] or (
+        [str(defaults.csv_file)] if getattr(defaults, "csv_file", None) else []
+    )
+    csv_display_var = tk.StringVar()
     output_var = tk.StringVar(value=str(defaults.output) if defaults.output else "")
     limit_var = tk.StringVar(value=str(defaults.limit or ""))
     album_var = tk.BooleanVar(value=defaults.include_album)
@@ -567,12 +605,25 @@ def launch_gui(defaults: argparse.Namespace) -> None:
     provider_var = tk.StringVar(value=defaults.search_provider)
     max_per_hour_var = tk.StringVar(value=str(defaults.max_downloads_per_hour))
 
-    def browse_csv() -> None:
-        path = filedialog.askopenfilename(
-            title="Select Exportify CSV", filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+    def refresh_csv_display() -> None:
+        display_value = "\n".join(csv_paths) if csv_paths else "No CSVs selected."
+        csv_display_var.set(display_value)
+
+    def browse_csvs() -> None:
+        paths = filedialog.askopenfilenames(
+            title="Select Exportify CSVs", filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
         )
-        if path:
-            csv_var.set(path)
+        if paths:
+            for path in paths:
+                if path not in csv_paths:
+                    csv_paths.append(path)
+            refresh_csv_display()
+
+    def clear_csvs() -> None:
+        csv_paths.clear()
+        refresh_csv_display()
+
+    refresh_csv_display()
 
     def browse_output() -> None:
         path = filedialog.askdirectory(title="Select output directory")
@@ -591,12 +642,18 @@ def launch_gui(defaults: argparse.Namespace) -> None:
         if button:
             button.grid(row=row, column=2, padx=4, pady=4)
 
-    add_row(
-        "CSV file",
-        ttk.Entry(form, textvariable=csv_var),
-        0,
-        ttk.Button(form, text="Browse", command=browse_csv),
+    csv_display = ttk.Label(
+        form,
+        textvariable=csv_display_var,
+        relief="solid",
+        padding=6,
+        anchor="w",
+        justify="left",
     )
+    csv_buttons = ttk.Frame(form)
+    ttk.Button(csv_buttons, text="Browse", command=browse_csvs).pack(side="left", padx=(0, 4))
+    ttk.Button(csv_buttons, text="Clear", command=clear_csvs).pack(side="left")
+    add_row("CSV files", csv_display, 0, csv_buttons)
     add_row(
         "Output folder",
         ttk.Entry(form, textvariable=output_var),
@@ -639,9 +696,8 @@ def launch_gui(defaults: argparse.Namespace) -> None:
     log_text.pack(fill="both", expand=True)
 
     def start_download() -> None:
-        csv_path = csv_var.get().strip()
-        if not csv_path:
-            messagebox.showerror("Missing CSV", "Please select a CSV file to download from.")
+        if not csv_paths:
+            messagebox.showerror("Missing CSV", "Please select at least one CSV file to download from.")
             return
 
         output_base = output_var.get().strip() or str(defaults.output)
@@ -666,8 +722,11 @@ def launch_gui(defaults: argparse.Namespace) -> None:
         status_var.set("Starting...")
         progress_bar.configure(maximum=1)
 
+        selected_csvs = [Path(path) for path in csv_paths]
+
         args = argparse.Namespace(
-            csv_file=Path(csv_path),
+            csv_files=selected_csvs,
+            csv_file=selected_csvs[0] if selected_csvs else None,
             output=Path(output_base),
             limit=limit_val,
             include_album=album_var.get(),
@@ -688,6 +747,12 @@ def launch_gui(defaults: argparse.Namespace) -> None:
 
         def progress_update(event: str, index: int, total: int, description: str) -> None:
             def update_ui() -> None:
+                if event == "file":
+                    progress_bar.configure(maximum=1)
+                    progress_var.set(0)
+                    status_var.set(f"File {index}/{max(total, 1)}: {description}")
+                    return
+
                 if total <= 0:
                     total_value = max(progress_bar["maximum"], index)
                 else:
@@ -734,7 +799,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         launch_gui(args)
         return 0
 
-    if args.csv_file is None:
+    if not args.csv_files:
         print("No CSV file provided via CLI or config. Launching GUI for selection...")
         try:
             launch_gui(args)
