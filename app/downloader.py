@@ -164,7 +164,8 @@ def download_job(job: Job, config: AppConfig, event_callback) -> None:
         loop = asyncio.new_event_loop()
         try:
             asyncio.set_event_loop(loop)
-            return spotdl_client.download(target_song)
+            scoped_spotdl = create_spotdl(config)
+            return scoped_spotdl.download(target_song)
         finally:
             loop.close()
             asyncio.set_event_loop(None)
