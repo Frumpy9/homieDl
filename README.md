@@ -14,7 +14,7 @@ A small FastAPI + vanilla JS interface for running [spotDL](https://github.com/s
    ```bash
    pip install -r requirements.txt
    ```
-2. Update `config.json` with your desired output directory and Spotify client credentials (required for playlist/user metadata). Ensure `ffmpeg` is on your PATH.
+2. Update `config.json` with your desired output directory and Spotify client credentials. Public playlists work best with credentials, and **user-library URLs require them**; without credentials those jobs will fail early with a clear error. Ensure `ffmpeg` is on your PATH.
 3. Run the server:
    ```bash
    uvicorn app.main:app --host 0.0.0.0 --port 8000

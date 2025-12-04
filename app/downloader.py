@@ -61,6 +61,11 @@ def build_track_id(song: Song) -> str:
     return song.url or f"{song.artists[0].name}-{song.name}"
 
 
+def requires_user_auth(url: str) -> bool:
+    normalized = url.lower()
+    return "open.spotify.com/user" in normalized or "/user/" in normalized or "/users/" in normalized
+
+
 def planned_output_path(song: Song, config: AppConfig) -> Path:
     path = create_file_name(
         song=song,
@@ -98,6 +103,12 @@ def download_job(job: Job, config: AppConfig, event_callback) -> None:
 
     spotdl_client = create_spotdl(config)
     spotify_client = build_spotify_client(config)
+
+    if requires_user_auth(job.url) and spotify_client is None:
+        raise DownloadError(
+            "Spotify user-library URLs require client credentials. Add spotify_client_id and "
+            "spotify_client_secret to config.json."
+        )
 
     job.playlist_name = get_playlist_name(spotify_client, job.url)
 
