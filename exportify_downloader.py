@@ -13,9 +13,11 @@ from __future__ import annotations
 import argparse
 import csv
 import sys
+import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
+from typing import Deque, Iterable, List, Optional, Tuple
 
 try:
     import tomllib  # Python 3.11+
@@ -50,6 +52,40 @@ class Track:
 
         # Using "audio" at the end helps yt-dlp avoid grabbing music videos.
         return " ".join(parts + ["audio"])
+
+
+class DownloadRateLimiter:
+    """Throttle download throughput to a fixed rate per hour."""
+
+    def __init__(self, max_per_hour: int) -> None:
+        self.max_per_hour = max_per_hour
+        self._timestamps: Deque[float] = deque()
+
+    def wait_for_slot(self) -> None:
+        """Block until a new download is allowed under the hourly cap."""
+
+        if self.max_per_hour <= 0:
+            return
+
+        while True:
+            now = time.time()
+            cutoff = now - 3600
+
+            while self._timestamps and self._timestamps[0] <= cutoff:
+                self._timestamps.popleft()
+
+            if len(self._timestamps) < self.max_per_hour:
+                self._timestamps.append(now)
+                return
+
+            sleep_for = (self._timestamps[0] + 3600) - now
+            sleep_for = max(sleep_for, 0)
+            wait_minutes = sleep_for / 60
+            print(
+                f"Download limit reached ({self.max_per_hour}/hour). "
+                f"Waiting ~{wait_minutes:.1f} minutes before continuing..."
+            )
+            time.sleep(sleep_for)
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -124,6 +160,13 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
             "YouTube Music API; 'youtube' uses standard YouTube search queries."
         ),
     )
+    parser.add_argument(
+        "--max-downloads-per-hour",
+        type=int,
+        dest="max_downloads_per_hour",
+        default=None,
+        help="Throttle downloads to this many songs per hour (default: 100)",
+    )
     return parser.parse_args(argv)
 
 
@@ -153,6 +196,7 @@ def resolve_settings(args: argparse.Namespace) -> argparse.Namespace:
         "audio_quality": "192",
         "dry_run": False,
         "search_provider": "youtube-music",
+        "max_downloads_per_hour": 100,
     }
 
     # Flatten simple config keys
@@ -166,6 +210,7 @@ def resolve_settings(args: argparse.Namespace) -> argparse.Namespace:
         "audio_quality": config_section.get("audio_quality"),
         "dry_run": config_section.get("dry_run"),
         "search_provider": config_section.get("search_provider"),
+        "max_downloads_per_hour": config_section.get("max_downloads_per_hour"),
     }
 
     resolved = argparse.Namespace()
@@ -190,6 +235,15 @@ def resolve_settings(args: argparse.Namespace) -> argparse.Namespace:
         args.search_provider
         or config_settings["search_provider"]
         or defaults["search_provider"]
+    )
+    resolved.max_downloads_per_hour = (
+        args.max_downloads_per_hour
+        if args.max_downloads_per_hour is not None
+        else (
+            config_settings["max_downloads_per_hour"]
+            if config_settings["max_downloads_per_hour"] is not None
+            else defaults["max_downloads_per_hour"]
+        )
     )
     resolved.config = args.config
     return resolved
@@ -295,8 +349,10 @@ def download_tracks(
     include_album: bool,
     dry_run: bool,
     search_provider: str,
+    max_downloads_per_hour: int = 100,
 ) -> List[Path]:
     downloaded_files: List[Path] = []
+    rate_limiter = DownloadRateLimiter(max_downloads_per_hour)
 
     if search_provider == "youtube-music":
         try:
@@ -330,6 +386,7 @@ def download_tracks(
             continue
 
         try:
+            rate_limiter.wait_for_slot()
             info = downloader.extract_info(query, download=True)
             # extract_info may return a playlist of entries. Each entry has already
             # gone through post-processing, so capture their final filepaths when
@@ -429,6 +486,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         include_album=args.include_album,
         dry_run=args.dry_run,
         search_provider=args.search_provider,
+        max_downloads_per_hour=args.max_downloads_per_hour,
     )
 
     for file_path in extracted_files:
