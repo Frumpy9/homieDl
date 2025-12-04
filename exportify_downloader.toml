@@ -1,0 +1,12 @@
+# Default settings for exportify_downloader.py
+# Adjust values to control downloads without passing CLI flags.
+
+[exportify_downloader]
+# csv_file = "playlist.csv"          # Optional: set a default CSV path
+output = "downloads"                 # Output directory for downloads and playlists
+limit = 0                             # 0 means no limit
+include_album = true                  # Include album name in search queries
+audio_format = "mp3"                 # Use "best" to keep source format
+audio_quality = "192"                # Used when converting with FFmpeg
+search_provider = "youtube-music"    # "youtube-music" or "youtube"
+dry_run = false                      # When true, only print search queries
