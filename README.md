@@ -1,7 +1,7 @@
-# Exportify YouTube Downloader
+# Exportify YouTube Music Downloader
 
 A small command-line helper that reads an [Exportify](https://watsonbox.github.io/exportify/) CSV
-playlist export and downloads each track from YouTube using `yt-dlp`.
+playlist export and downloads each track from **YouTube Music** using `yt-dlp`.
 
 ## Requirements
 - Python 3.10+
@@ -22,6 +22,7 @@ Key options:
 - `--output`: Directory for the downloaded audio files (defaults to `downloads`).
 - `--limit`: Only process the first N tracks from the CSV.
 - `--no-album`: Build search queries without the album name.
+- `--search-provider`: Choose YouTube Music (default) or regular YouTube search.
 - `--audio-format`: Audio format passed to FFmpeg (default: `mp3`). Use `best` to keep the
   original stream without conversion.
 - `--audio-quality`: FFmpeg audio quality/bitrate (e.g., `192`, `320`).
@@ -30,8 +31,11 @@ Key options:
 ## How it works
 1. Each CSV row is converted into a search query composed of the artist, track name, and
    optionally the album name.
-2. `yt-dlp` searches YouTube using `ytsearch1:<query>` to grab the best match.
-3. The best audio stream is downloaded; by default it is converted to MP3 via FFmpeg.
+2. `yt-dlp` searches **YouTube Music** using `ytmusicsearch1:<query>` (or regular YouTube with
+   `ytsearch1:<query>` if you opt in to `--search-provider youtube`) to grab the best match.
+3. The best audio stream is downloaded and converted to MP3 via FFmpeg by default.
+4. Metadata (title, artist, album when available) and the YouTube Music thumbnail are embedded
+   into the output file so your library software can identify each track.
 
 ## Example
 ```

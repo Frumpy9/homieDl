@@ -1,4 +1,4 @@
-"""Download tracks listed in an Exportify CSV by searching YouTube with yt-dlp.
+"""Download tracks listed in an Exportify CSV by searching YouTube Music with yt-dlp.
 
 Usage example:
     python exportify_downloader.py playlist.csv --output downloads
@@ -28,7 +28,7 @@ class Track:
     artists: str
     album: str
 
-    def build_query(self, include_album: bool) -> str:
+    def build_query(self, include_album: bool, search_prefix: str) -> str:
         parts: List[str] = []
         if self.artists:
             parts.append(self.artists)
@@ -37,13 +37,13 @@ class Track:
         if include_album and self.album:
             parts.append(self.album)
         query = " ".join(parts)
-        return f"ytsearch1:{query}" if query else ""
+        return f"{search_prefix}:{query}" if query else ""
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Download songs from an Exportify CSV by searching YouTube with yt-dlp. "
+            "Download songs from an Exportify CSV by searching YouTube Music with yt-dlp. "
             "Each row becomes a search query composed of artist and track names."
         )
     )
@@ -83,6 +83,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Print search queries without downloading any files",
     )
+    parser.add_argument(
+        "--search-provider",
+        choices=["youtube-music", "youtube"],
+        default="youtube-music",
+        help=(
+            "Where to search for tracks. 'youtube-music' uses yt-dlp's ytmusicsearch "
+            "and embeds metadata from the YouTube Music result; 'youtube' falls back "
+            "to the regular YouTube search."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -120,23 +130,44 @@ def build_downloader(output_dir: Path, audio_format: str, audio_quality: str) ->
         "outtmpl": str(output_dir / "%(title)s.%(ext)s"),
         "quiet": False,
         "ignoreerrors": True,
+        "addmetadata": True,
+        "embedthumbnail": True,
+        "writethumbnail": True,
     }
 
+    postprocessors = [
+        {
+            "key": "FFmpegMetadata",
+        },
+        {
+            "key": "EmbedThumbnail",
+        },
+    ]
+
     if audio_format != "best":
-        ydl_opts["postprocessors"] = [
+        postprocessors.insert(
+            0,
             {
                 "key": "FFmpegExtractAudio",
                 "preferredcodec": audio_format,
                 "preferredquality": audio_quality,
-            }
-        ]
+            },
+        )
+
+    ydl_opts["postprocessors"] = postprocessors
 
     return yt_dlp.YoutubeDL(ydl_opts)
 
 
-def download_tracks(tracks: Iterable[Track], downloader: yt_dlp.YoutubeDL, include_album: bool, dry_run: bool) -> None:
+def download_tracks(
+    tracks: Iterable[Track],
+    downloader: yt_dlp.YoutubeDL,
+    include_album: bool,
+    dry_run: bool,
+    search_prefix: str,
+) -> None:
     for track in tracks:
-        query = track.build_query(include_album=include_album)
+        query = track.build_query(include_album=include_album, search_prefix=search_prefix)
         if not query:
             print("Skipping row with missing track and artist info.")
             continue
@@ -166,11 +197,19 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     include_album = not args.no_album
 
+    search_prefix = "ytmusicsearch1" if args.search_provider == "youtube-music" else "ytsearch1"
+
     print(
         f"Found {len(tracks)} tracks. Output directory: {args.output.resolve()}"
     )
     downloader = build_downloader(args.output, args.audio_format, args.audio_quality)
-    download_tracks(tracks, downloader, include_album=include_album, dry_run=args.dry_run)
+    download_tracks(
+        tracks,
+        downloader,
+        include_album=include_album,
+        dry_run=args.dry_run,
+        search_prefix=search_prefix,
+    )
     return 0
 
 
