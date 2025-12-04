@@ -117,6 +117,9 @@ def download_job(job: Job, config: AppConfig, event_callback) -> None:
     asyncio.set_event_loop(loop)
     try:
         spotdl_client = create_spotdl(config)
+        # SpotDL constructs its own event loop at initialization; replace it so every
+        # coroutine uses the per-job loop and avoids cross-loop attachment errors.
+        spotdl_client.downloader.loop = loop
         spotify_client = build_spotify_client(config)
 
         if requires_user_auth(job.url) and spotify_client is None:
