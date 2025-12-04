@@ -22,8 +22,11 @@ python exportify_downloader.py --gui  # launch a simple GUI
 
 ### Quick start
 1. Install dependencies: `pip install -r requirements.txt` (FFmpeg must be on your `PATH`).
-2. Command line: run `python exportify_downloader.py your_playlist.csv --output downloads`.
-3. GUI: run `python exportify_downloader.py --gui`, or simply run `python exportify_downloader.py`
+2. Download your playlist CSV: visit [exportify.net](https://exportify.net/), sign in with your
+   Spotify account, and click **Export** to download the CSV file for the playlist you want to
+   process.
+3. Command line: run `python exportify_downloader.py your_playlist.csv --output downloads`.
+4. GUI: run `python exportify_downloader.py --gui`, or simply run `python exportify_downloader.py`
    without arguments to open the GUI if no CSV is provided. Use the "Browse" buttons to pick a CSV
    and output folder, configure options, and click **Download** to watch progress updates.
 
