@@ -37,6 +37,9 @@ Key options:
 3. The best audio stream is downloaded and converted to MP3 via FFmpeg by default.
 4. Metadata (title, artist, album when available) and the YouTube Music thumbnail are embedded
    into the output file so your library software can identify each track.
+5. After the downloads finish, an M3U playlist file (named after the CSV, e.g., `playlist.m3u`)
+   is written to the output directory with relative paths to the downloaded tracks so you can
+   load the set on a player that supports playlists.
 
 ## Example
 ```

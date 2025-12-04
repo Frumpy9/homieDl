@@ -128,7 +128,12 @@ def read_tracks(csv_path: Path, limit: Optional[int]) -> Iterable[Track]:
             yield track
 
 
-def build_downloader(output_dir: Path, audio_format: str, audio_quality: str) -> yt_dlp.YoutubeDL:
+def build_downloader(
+    output_dir: Path,
+    audio_format: str,
+    audio_quality: str,
+    progress_hook,
+) -> yt_dlp.YoutubeDL:
     """Create a configured YoutubeDL instance for audio downloads."""
 
     ydl_opts = {
@@ -152,6 +157,7 @@ def build_downloader(output_dir: Path, audio_format: str, audio_quality: str) ->
                 ]
             )
         ),
+        "progress_hooks": [progress_hook],
     }
 
     postprocessors = [
@@ -184,7 +190,9 @@ def download_tracks(
     include_album: bool,
     dry_run: bool,
     search_prefix: str,
-) -> None:
+) -> List[Path]:
+    downloaded_files: List[Path] = []
+
     for track in tracks:
         query = track.build_query(include_album=include_album, search_prefix=search_prefix)
         if not query:
@@ -196,9 +204,44 @@ def download_tracks(
             continue
 
         try:
-            downloader.download([query])
+            info = downloader.extract_info(query, download=True)
+            # extract_info may return a playlist of entries. Each entry has already
+            # gone through post-processing, so capture their final filepaths when
+            # available.
+            if info:
+                entries = info.get("entries") if isinstance(info, dict) else None
+                if entries:
+                    for entry in entries:
+                        filepath = entry.get("filepath") or entry.get("_filename")
+                        if filepath:
+                            downloaded_files.append(Path(filepath))
+                else:
+                    filepath = info.get("filepath") or info.get("_filename")
+                    if filepath:
+                        downloaded_files.append(Path(filepath))
         except yt_dlp.utils.DownloadError as exc:  # type: ignore[attr-defined]
             print(f"Failed to download {query}: {exc}")
+
+    return downloaded_files
+
+
+def write_m3u_playlist(playlist_path: Path, downloaded_files: List[Path], output_dir: Path) -> None:
+    """Write an M3U playlist with paths relative to the output directory."""
+
+    if not downloaded_files:
+        print("No files were downloaded; skipping playlist creation.")
+        return
+
+    lines = ["#EXTM3U"]
+    for file_path in downloaded_files:
+        try:
+            relative_path = file_path.relative_to(output_dir)
+            lines.append(str(relative_path))
+        except ValueError:
+            lines.append(str(file_path))
+
+    playlist_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"Created playlist: {playlist_path}")
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -221,14 +264,32 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(
         f"Found {len(tracks)} tracks. Output directory: {args.output.resolve()}"
     )
-    downloader = build_downloader(args.output, args.audio_format, args.audio_quality)
-    download_tracks(
+    downloaded_files: List[Path] = []
+
+    def progress_hook(status):
+        if status.get("status") == "finished":
+            info = status.get("info_dict") or {}
+            filepath = info.get("filepath") or status.get("filename")
+            if filepath:
+                downloaded_files.append(Path(filepath))
+
+    downloader = build_downloader(
+        args.output, args.audio_format, args.audio_quality, progress_hook
+    )
+    extracted_files = download_tracks(
         tracks,
         downloader,
         include_album=include_album,
         dry_run=args.dry_run,
         search_prefix=search_prefix,
     )
+
+    for file_path in extracted_files:
+        if file_path not in downloaded_files:
+            downloaded_files.append(file_path)
+
+    playlist_path = args.output / f"{args.csv_file.stem}.m3u"
+    write_m3u_playlist(playlist_path, downloaded_files, args.output)
     return 0
 
 
