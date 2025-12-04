@@ -17,6 +17,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional
 
+try:
+    import tomllib  # Python 3.11+
+except ModuleNotFoundError:  # pragma: no cover - fallback for older Pythons
+    import tomli as tomllib
+
 import yt_dlp
 
 
@@ -54,11 +59,22 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
             "Each row becomes a search query composed of artist and track names."
         )
     )
-    parser.add_argument("csv_file", type=Path, help="Path to the Exportify CSV file")
+    parser.add_argument(
+        "csv_file",
+        type=Path,
+        nargs="?",
+        help="Path to the Exportify CSV file (can be set in config)",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("exportify_downloader.toml"),
+        help="Path to a TOML config file with default settings",
+    )
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("downloads"),
+        default=None,
         help="Directory where downloaded audio files will be saved (default: downloads)",
     )
     parser.add_argument(
@@ -70,11 +86,19 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--no-album",
         action="store_true",
+        dest="include_album",
+        default=None,
         help="Do not include the album name in the YouTube search query",
     )
     parser.add_argument(
+        "--album",
+        action="store_true",
+        dest="include_album",
+        help="Force include album name in the search query",
+    )
+    parser.add_argument(
         "--audio-format",
-        default="mp3",
+        default=None,
         help=(
             "Audio format for yt-dlp conversion (passed to FFmpeg). "
             "Use 'best' to skip conversion and keep the source format."
@@ -82,18 +106,19 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--audio-quality",
-        default="192",
+        default=None,
         help="Audio quality for FFmpeg postprocessing (e.g., 128, 192, 320)",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
+        default=None,
         help="Print search queries without downloading any files",
     )
     parser.add_argument(
         "--search-provider",
         choices=["youtube-music", "youtube"],
-        default="youtube-music",
+        default=None,
         help=(
             "Where to search for tracks. 'youtube-music' uses yt-dlp's ytmusicsearch "
             "and embeds metadata from the YouTube Music result; 'youtube' falls back "
@@ -101,6 +126,74 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         ),
     )
     return parser.parse_args(argv)
+
+
+def load_config(config_path: Path) -> dict:
+    """Load a TOML configuration file if it exists."""
+
+    if not config_path.exists():
+        return {}
+
+    with config_path.open("rb") as f:
+        try:
+            return tomllib.load(f)
+        except Exception as exc:  # pragma: no cover - passthrough to caller
+            raise ValueError(f"Failed to read config file {config_path}: {exc}")
+
+
+def resolve_settings(args: argparse.Namespace) -> argparse.Namespace:
+    """Merge CLI args with config values, preferring CLI when provided."""
+
+    config = load_config(args.config)
+
+    defaults = {
+        "output": Path("downloads"),
+        "limit": None,
+        "include_album": True,
+        "audio_format": "mp3",
+        "audio_quality": "192",
+        "dry_run": False,
+        "search_provider": "youtube-music",
+    }
+
+    # Flatten simple config keys
+    config_section = config.get("exportify_downloader", {}) if isinstance(config, dict) else {}
+    config_settings = {
+        "csv_file": config_section.get("csv_file"),
+        "output": Path(config_section["output"]) if config_section.get("output") else None,
+        "limit": config_section.get("limit"),
+        "include_album": config_section.get("include_album"),
+        "audio_format": config_section.get("audio_format"),
+        "audio_quality": config_section.get("audio_quality"),
+        "dry_run": config_section.get("dry_run"),
+        "search_provider": config_section.get("search_provider"),
+    }
+
+    resolved = argparse.Namespace()
+    resolved.csv_file = args.csv_file or config_settings["csv_file"]
+    resolved.output = args.output or config_settings["output"] or defaults["output"]
+    resolved.limit = args.limit if args.limit is not None else config_settings["limit"]
+    if resolved.limit == 0:
+        resolved.limit = None
+    resolved.include_album = (
+        args.include_album
+        if args.include_album is not None
+        else (config_settings["include_album"] if config_settings["include_album"] is not None else defaults["include_album"])
+    )
+    resolved.audio_format = args.audio_format or config_settings["audio_format"] or defaults["audio_format"]
+    resolved.audio_quality = args.audio_quality or config_settings["audio_quality"] or defaults["audio_quality"]
+    resolved.dry_run = (
+        args.dry_run
+        if args.dry_run is not None
+        else (config_settings["dry_run"] if config_settings["dry_run"] is not None else defaults["dry_run"])
+    )
+    resolved.search_provider = (
+        args.search_provider
+        or config_settings["search_provider"]
+        or defaults["search_provider"]
+    )
+    resolved.config = args.config
+    return resolved
 
 
 def read_tracks(csv_path: Path, limit: Optional[int]) -> Iterable[Track]:
@@ -245,19 +338,22 @@ def write_m3u_playlist(playlist_path: Path, downloaded_files: List[Path], output
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    args = parse_args(argv)
+    args = resolve_settings(parse_args(argv))
 
-    if not args.csv_file.exists():
-        print(f"CSV file not found: {args.csv_file}", file=sys.stderr)
+    if not args.csv_file:
+        print("No CSV file provided via CLI or config.", file=sys.stderr)
+        return 1
+
+    csv_path = Path(args.csv_file)
+    if not csv_path.exists():
+        print(f"CSV file not found: {csv_path}", file=sys.stderr)
         return 1
 
     args.output.mkdir(parents=True, exist_ok=True)
-    tracks = list(read_tracks(args.csv_file, args.limit))
+    tracks = list(read_tracks(csv_path, args.limit))
     if not tracks:
         print("No tracks found in CSV. Nothing to download.")
         return 0
-
-    include_album = not args.no_album
 
     search_prefix = "ytmusicsearch5" if args.search_provider == "youtube-music" else "ytsearch5"
 
@@ -279,7 +375,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     extracted_files = download_tracks(
         tracks,
         downloader,
-        include_album=include_album,
+        include_album=args.include_album,
         dry_run=args.dry_run,
         search_prefix=search_prefix,
     )
@@ -288,7 +384,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         if file_path not in downloaded_files:
             downloaded_files.append(file_path)
 
-    playlist_path = args.output / f"{args.csv_file.stem}.m3u"
+    playlist_path = args.output / f"{csv_path.stem}.m3u"
     write_m3u_playlist(playlist_path, downloaded_files, args.output)
     return 0
 

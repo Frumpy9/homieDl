@@ -28,6 +28,26 @@ Key options:
 - `--audio-quality`: FFmpeg audio quality/bitrate (e.g., `192`, `320`).
 - `--dry-run`: Show the generated search queries without downloading anything.
 
+### Config file
+- A TOML config named `exportify_downloader.toml` is read by default (override with
+  `--config path/to/file`).
+- Place your defaults under the `[exportify_downloader]` section; CLI flags override
+  any values in the config.
+
+Example `exportify_downloader.toml`:
+
+```
+[exportify_downloader]
+csv_file = "playlist.csv"      # Optional: let the tool read this CSV without a CLI argument
+output = "downloads"            # Where audio files and the M3U playlist are written
+limit = 0                       # 0 means no limit
+include_album = true            # Include album name in search queries
+audio_format = "mp3"            # Use "best" to keep the source format
+audio_quality = "192"           # FFmpeg bitrate when converting
+search_provider = "youtube-music"  # Or "youtube"
+dry_run = false                 # Only print queries when true
+```
+
 ## How it works
 1. Each CSV row is converted into a search query composed of the **track name and artist name**
    (album is optional). The term `audio` is appended to bias results toward official audio.
