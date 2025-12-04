@@ -238,14 +238,16 @@ def build_downloader(
         "embedthumbnail": True,
         "writethumbnail": True,
         # Avoid music videos by rejecting common video markers; the search query
-        # already appends "audio", but this adds an extra safeguard.
+        # already appends "audio", but this adds an extra safeguard. The filter
+        # expression uses plain Python to remain compatible across yt-dlp
+        # versions that may not expose helper functions like ``contains``.
         "match_filter": yt_dlp.utils.match_filter_func(
-            " & ".join(
+            " and ".join(
                 [
-                    "!is_live",
-                    "!contains(title, 'music video')",
-                    "!contains(title, 'official video')",
-                    "!contains(title, 'official music video')",
+                    "not is_live",
+                    "'music video' not in (title or '').lower()",
+                    "'official video' not in (title or '').lower()",
+                    "'official music video' not in (title or '').lower()",
                 ]
             )
         ),
