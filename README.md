@@ -29,10 +29,11 @@ Key options:
 - `--dry-run`: Show the generated search queries without downloading anything.
 
 ## How it works
-1. Each CSV row is converted into a search query composed of the artist, track name, and
-   optionally the album name.
-2. `yt-dlp` searches **YouTube Music** using `ytmusicsearch1:<query>` (or regular YouTube with
-   `ytsearch1:<query>` if you opt in to `--search-provider youtube`) to grab the best match.
+1. Each CSV row is converted into a search query composed of the **track name and artist name**
+   (album is optional). The term `audio` is appended to bias results toward official audio.
+2. `yt-dlp` searches **YouTube Music** using `ytmusicsearch5:<query>` (or regular YouTube with
+   `ytsearch5:<query>` if you opt in to `--search-provider youtube`). Common "music video"
+   markers are filtered out so downloads stay on audio-first results.
 3. The best audio stream is downloaded and converted to MP3 via FFmpeg by default.
 4. Metadata (title, artist, album when available) and the YouTube Music thumbnail are embedded
    into the output file so your library software can identify each track.

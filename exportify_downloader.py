@@ -29,15 +29,22 @@ class Track:
     album: str
 
     def build_query(self, include_album: bool, search_prefix: str) -> str:
-        parts: List[str] = []
-        if self.artists:
-            parts.append(self.artists)
-        if self.title:
-            parts.append(self.title)
+        """Build a search query that always includes title and artist.
+
+        Album stays optional, but we always lead with track + artist and append
+        the word "audio" to bias results away from music videos.
+        """
+
+        if not self.title or not self.artists:
+            return ""
+
+        parts: List[str] = [self.title, self.artists]
         if include_album and self.album:
             parts.append(self.album)
-        query = " ".join(parts)
-        return f"{search_prefix}:{query}" if query else ""
+
+        # Using "audio" at the end helps yt-dlp avoid grabbing music videos.
+        query = " ".join(parts + ["audio"])
+        return f"{search_prefix}:{query}"
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -133,6 +140,18 @@ def build_downloader(output_dir: Path, audio_format: str, audio_quality: str) ->
         "addmetadata": True,
         "embedthumbnail": True,
         "writethumbnail": True,
+        # Avoid music videos by rejecting common video markers; the search query
+        # already appends "audio", but this adds an extra safeguard.
+        "match_filter": yt_dlp.utils.match_filter_func(
+            " & ".join(
+                [
+                    "!is_live",
+                    "!contains(title, 'music video')",
+                    "!contains(title, 'official video')",
+                    "!contains(title, 'official music video')",
+                ]
+            )
+        ),
     }
 
     postprocessors = [
@@ -197,7 +216,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     include_album = not args.no_album
 
-    search_prefix = "ytmusicsearch1" if args.search_provider == "youtube-music" else "ytsearch1"
+    search_prefix = "ytmusicsearch5" if args.search_provider == "youtube-music" else "ytsearch5"
 
     print(
         f"Found {len(tracks)} tracks. Output directory: {args.output.resolve()}"
