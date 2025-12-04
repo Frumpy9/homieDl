@@ -4,7 +4,6 @@ import logging
 import os
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
-import concurrent.futures
 
 from spotdl import Spotdl
 from spotdl.types.song import Song
@@ -112,111 +111,109 @@ def download_job(job: Job, config: AppConfig, event_callback) -> None:
     logger.info("Job %s: starting download pipeline for %s", job.id, job.url)
     config.ensure_paths()
 
-    spotdl_client = create_spotdl(config)
-    spotify_client = build_spotify_client(config)
+    import asyncio
 
-    if requires_user_auth(job.url) and spotify_client is None:
-        raise DownloadError(
-            "Spotify user-library URLs require client credentials. Add spotify_client_id and "
-            "spotify_client_secret to config.json."
-        )
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        spotdl_client = create_spotdl(config)
+        spotify_client = build_spotify_client(config)
 
-    job.playlist_name = get_playlist_name(spotify_client, job.url)
-    logger.info("Job %s: resolved playlist name %s", job.id, job.playlist_name)
-
-    job.status = JobStatus.running
-    job.add_log("Starting search...")
-    event_callback()
-
-    songs: List[Song] = spotdl_client.search([job.url])
-    if not songs:
-        raise DownloadError("No tracks resolved from the provided URL")
-
-    logger.info("Job %s: resolved %s songs", job.id, len(songs))
-    for idx, song in enumerate(songs):
-        logger.info(
-            "Job %s: song[%s] title=%s artists=%s url=%s",
-            job.id,
-            idx,
-            getattr(song, "name", song),
-            [get_artist_name(a) for a in getattr(song, "artists", [])],
-            getattr(song, "url", None),
-        )
-
-    for song in songs:
-        track_id = build_track_id(song)
-        track_state = job.tracks.setdefault(
-            track_id,
-            TrackState(
-                id=track_id,
-                title=getattr(song, "name", str(song)),
-                artist=", ".join(get_artist_name(artist) for artist in getattr(song, "artists", [])),
-            ),
-        )
-
-    event_callback()
-
-    def download_with_event_loop(target_song: Song):
-        """Run spotdl download in a fresh event loop (required in worker threads)."""
-
-        import asyncio
-
-        loop = asyncio.new_event_loop()
-        try:
-            asyncio.set_event_loop(loop)
-            scoped_spotdl = create_spotdl(config)
-            return scoped_spotdl.download(target_song)
-        finally:
-            loop.close()
-            asyncio.set_event_loop(None)
-
-    for song in songs:
-        track_id = build_track_id(song)
-        track = job.tracks[track_id]
-        try:
-            track.status = "downloading"
-            job.add_log(f"Downloading {track.title}...")
-            logger.info(
-                "Job %s: downloading track %s (%s)",
-                job.id,
-                track.id,
-                track.title,
+        if requires_user_auth(job.url) and spotify_client is None:
+            raise DownloadError(
+                "Spotify user-library URLs require client credentials. Add spotify_client_id and "
+                "spotify_client_secret to config.json."
             )
-            event_callback()
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(download_with_event_loop, song)
+        job.playlist_name = get_playlist_name(spotify_client, job.url)
+        logger.info("Job %s: resolved playlist name %s", job.id, job.playlist_name)
+
+        job.status = JobStatus.running
+        job.add_log("Starting search...")
+        event_callback()
+
+        songs: List[Song] = spotdl_client.search([job.url])
+        if not songs:
+            raise DownloadError("No tracks resolved from the provided URL")
+
+        logger.info("Job %s: resolved %s songs", job.id, len(songs))
+        for idx, song in enumerate(songs):
+            logger.info(
+                "Job %s: song[%s] title=%s artists=%s url=%s",
+                job.id,
+                idx,
+                getattr(song, "name", song),
+                [get_artist_name(a) for a in getattr(song, "artists", [])],
+                getattr(song, "url", None),
+            )
+
+        for song in songs:
+            track_id = build_track_id(song)
+            job.tracks.setdefault(
+                track_id,
+                TrackState(
+                    id=track_id,
+                    title=getattr(song, "name", str(song)),
+                    artist=", ".join(
+                        get_artist_name(artist) for artist in getattr(song, "artists", [])
+                    ),
+                ),
+            )
+
+        event_callback()
+
+        for song in songs:
+            track_id = build_track_id(song)
+            track = job.tracks[track_id]
+            try:
+                track.status = "downloading"
+                job.add_log(f"Downloading {track.title}...")
+                logger.info(
+                    "Job %s: downloading track %s (%s)",
+                    job.id,
+                    track.id,
+                    track.title,
+                )
+                event_callback()
                 try:
-                    result_song, downloaded_path = future.result(timeout=config.track_download_timeout)
-                except concurrent.futures.TimeoutError as exc:
-                    future.cancel()
+                    results = loop.run_until_complete(
+                        asyncio.wait_for(
+                            spotdl_client.downloader.pool_download([song]),
+                            timeout=config.track_download_timeout,
+                        )
+                    )
+                except asyncio.TimeoutError as exc:
                     raise DownloadError(
                         f"Timed out after {config.track_download_timeout}s while downloading"
                     ) from exc
 
-            target_path = downloaded_path or planned_output_path(song, config)
-            track.path = target_path
-            track.status = "downloaded"
-            job.add_log(f"Finished {track.title}")
-            logger.info(
-                "Job %s: finished track %s stored at %s", job.id, track.id, target_path
-            )
-            if job.playlist_name:
-                sync_playlist_manifest(job.playlist_name, job.tracks.values(), config)
-        except Exception as exc:  # noqa: BLE001
-            track.status = "error"
-            track.message = str(exc)
-            job.add_log(f"Failed {track.title}: {exc}")
-            logger.exception("Job %s: failed downloading track %s", job.id, track.id)
-            event_callback()
+                result_song, downloaded_path = results[0]
+                target_path = downloaded_path or planned_output_path(result_song, config)
+                track.path = target_path
+                track.status = "downloaded"
+                job.add_log(f"Finished {track.title}")
+                logger.info(
+                    "Job %s: finished track %s stored at %s", job.id, track.id, target_path
+                )
+                if job.playlist_name:
+                    sync_playlist_manifest(job.playlist_name, job.tracks.values(), config)
+            except Exception as exc:  # noqa: BLE001
+                track.status = "error"
+                track.message = str(exc)
+                job.add_log(f"Failed {track.title}: {exc}")
+                logger.exception("Job %s: failed downloading track %s", job.id, track.id)
+                event_callback()
 
-    if all(track.status == "downloaded" for track in job.tracks.values()):
-        job.status = JobStatus.completed
-    else:
-        job.status = JobStatus.failed
-        job.error = "Some tracks failed. Check logs."
-        logger.error("Job %s: completed with errors", job.id)
-    event_callback()
+        if all(track.status == "downloaded" for track in job.tracks.values()):
+            job.status = JobStatus.completed
+        else:
+            job.status = JobStatus.failed
+            job.error = "Some tracks failed. Check logs."
+            logger.error("Job %s: completed with errors", job.id)
+        event_callback()
+    finally:
+        loop.close()
+        asyncio.set_event_loop(None)
 
 
 def run_job(job: Job, config: AppConfig, event_callback) -> None:
