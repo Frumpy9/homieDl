@@ -734,6 +734,20 @@ def main(argv: Optional[List[str]] = None) -> int:
         launch_gui(args)
         return 0
 
+    if args.csv_file is None:
+        print("No CSV file provided via CLI or config. Launching GUI for selection...")
+        try:
+            launch_gui(args)
+            return 0
+        except tk.TclError as exc:
+            print(
+                "Unable to open the GUI automatically. "
+                "Provide a CSV path via CLI flags or run with --gui instead.",
+                file=sys.stderr,
+            )
+            print(exc, file=sys.stderr)
+            return 1
+
     return run_downloader(args)
 
 
