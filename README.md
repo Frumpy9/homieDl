@@ -21,6 +21,21 @@ A small FastAPI + vanilla JS interface for running [spotDL](https://github.com/s
    ```
 4. Open `http://localhost:8000` in your browser and start a download.
 
+## Run in Docker
+If you don't want to manage Python/SpotDL versions locally, build the provided image (Python 3.9 + ffmpeg preinstalled) and run it in a container:
+
+```bash
+docker build -t spotdl-web .
+docker run -p 8000:8000 \
+  -v "$(pwd)/downloads:/app/downloads" \
+  -v "$(pwd)/config.json:/app/config.json" \
+  spotdl-web
+```
+
+- The `downloads` mount keeps your library/playlists on the host. Adjust the host path as needed.
+- The `config.json` mount lets you edit credentials/output paths without rebuilding.
+- Then browse to `http://localhost:8000`.
+
 ## Notes
 - Downloads are written to `<output_dir>/<library_dir_name>`; playlist folders and M3U manifests live under `<output_dir>/<playlists_dir_name>`.
 - Jobs and logs are held in memory while the server runs.
