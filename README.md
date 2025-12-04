@@ -10,7 +10,7 @@ A small FastAPI + vanilla JS interface for running [spotDL](https://github.com/s
 - Configurable output paths, filename template, overwrite behavior, thread count, and per-track timeout via `config.json`.
 
 ## Setup
-1. Install dependencies (Python 3.9+). The app pins `spotdl==4.3.1`, the latest version currently available on PyPI:
+1. Install dependencies (Python 3.10+). The app pins `spotdl==4.3.1`, the latest version currently available on PyPI:
    ```bash
    pip install -r requirements.txt
    ```
@@ -22,7 +22,7 @@ A small FastAPI + vanilla JS interface for running [spotDL](https://github.com/s
 4. Open `http://localhost:8000` in your browser and start a download.
 
 ## Run in Docker
-If you don't want to manage Python/SpotDL versions locally, build the provided image (Python 3.9 + ffmpeg preinstalled) and run it in a container:
+If you don't want to manage Python/SpotDL versions locally, build the provided image (Python 3.11 + ffmpeg preinstalled) and run it in a container:
 
 ```bash
 docker build -t spotdl-web .
