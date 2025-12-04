@@ -10,7 +10,7 @@ A small FastAPI + vanilla JS interface for running [spotDL](https://github.com/s
 - Configurable output paths, filename template, overwrite behavior, thread count, and per-track timeout via `config.json`.
 
 ## Setup
-1. Install dependencies (Python 3.10+). The app pins `spotdl==4.3.1`, the latest version currently available on PyPI:
+1. Install dependencies (Python 3.10+). The app pins `spotdl==4.4.3`:
    ```bash
    pip install -r requirements.txt
    ```
