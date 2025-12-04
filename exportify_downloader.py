@@ -359,7 +359,7 @@ def download_tracks(
                     downloaded_files.append(Path(filepath))
 
             if isinstance(info, dict):
-                entries = info.get("entries")
+                entries = info.get("entries") if isinstance(info.get("entries"), list) else None
                 if entries:
                     for entry in entries:
                         if isinstance(entry, dict):
@@ -372,6 +372,9 @@ def download_tracks(
                         record_filepath(entry)
         except yt_dlp.utils.DownloadError as exc:  # type: ignore[attr-defined]
             print(f"Failed to download {query}: {exc}")
+        except AttributeError as exc:
+            # Protect against unexpected result shapes that are not dictionaries.
+            print(f"Skipped malformed download result for {display}: {exc}")
 
     return downloaded_files
 
