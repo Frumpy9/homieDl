@@ -285,6 +285,9 @@ def search_ytmusic(ytmusic: YTMusic, terms: str) -> Tuple[Optional[str], Optiona
         return None, None
 
     for entry in results:
+        if not isinstance(entry, dict):
+            continue
+
         video_id = entry.get("videoId")
         title = entry.get("title")
         if video_id:
