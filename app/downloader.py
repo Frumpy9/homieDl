@@ -156,6 +156,19 @@ def download_job(job: Job, config: AppConfig, event_callback) -> None:
 
     event_callback()
 
+    def download_with_event_loop(target_song: Song):
+        """Run spotdl download in a fresh event loop (required in worker threads)."""
+
+        import asyncio
+
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            return spotdl_client.download(target_song)
+        finally:
+            loop.close()
+            asyncio.set_event_loop(None)
+
     for song in songs:
         track_id = build_track_id(song)
         track = job.tracks[track_id]
@@ -171,7 +184,7 @@ def download_job(job: Job, config: AppConfig, event_callback) -> None:
             event_callback()
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(spotdl_client.download, song)
+                future = executor.submit(download_with_event_loop, song)
                 try:
                     result_song, downloaded_path = future.result(timeout=config.track_download_timeout)
                 except concurrent.futures.TimeoutError as exc:
