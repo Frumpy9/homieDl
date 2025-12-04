@@ -128,39 +128,48 @@ def download_job(job: Job, config: AppConfig, event_callback) -> None:
     event_callback()
 
     try:
-        results = spotdl_client.download(job.url)
+        songs = spotdl_client.search([job.url])
     except Exception as exc:  # noqa: BLE001
         job.status = JobStatus.failed
         job.error = str(exc)
         job.add_log(f"Job failed: {exc}")
-        logger.exception("Job %s: spotdl download failed", job.id)
+        logger.exception("Job %s: failed resolving songs", job.id)
         event_callback()
         return
 
-    if not results:
+    if not songs:
         job.status = JobStatus.failed
         job.error = "No tracks resolved from the provided URL"
         job.add_log(job.error)
         event_callback()
         return
 
-    logger.info("Job %s: spotdl returned %s tracks", job.id, len(results))
+    logger.info("Job %s: spotdl resolved %s songs", job.id, len(songs))
 
-    for result_song, downloaded_path in results:
-        track_id = build_track_id(result_song)
+    for song in songs:
+        track_id = build_track_id(song)
         track = job.tracks.setdefault(
             track_id,
             TrackState(
                 id=track_id,
-                title=getattr(result_song, "name", str(result_song)),
-                artist=", ".join(
-                    get_artist_name(artist) for artist in getattr(result_song, "artists", [])
-                ),
+                title=getattr(song, "name", str(song)),
+                artist=", ".join(get_artist_name(artist) for artist in getattr(song, "artists", [])),
             ),
         )
         track.status = "downloading"
         job.add_log(f"Downloading {track.title}...")
         event_callback()
+
+        try:
+            result_song, downloaded_path = spotdl_client.download(song)
+        except Exception as exc:  # noqa: BLE001
+            track.status = "failed"
+            job.add_log(f"Failed {track.title}: {exc}")
+            logger.exception(
+                "Job %s: failed downloading track %s", job.id, getattr(song, "url", song)
+            )
+            event_callback()
+            continue
 
         target_path = downloaded_path or planned_output_path(result_song, config)
         track.path = target_path
@@ -170,7 +179,11 @@ def download_job(job: Job, config: AppConfig, event_callback) -> None:
         if job.playlist_name:
             sync_playlist_manifest(job.playlist_name, job.tracks.values(), config)
 
-    job.status = JobStatus.completed
+    if any(track.status == "downloaded" for track in job.tracks.values()):
+        job.status = JobStatus.completed
+    else:
+        job.status = JobStatus.failed
+        job.error = "All tracks failed to download"
     event_callback()
 
 
