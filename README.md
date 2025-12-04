@@ -20,7 +20,8 @@ python exportify_downloader.py <playlist.csv> [--output downloads] [--limit 5]
 ```
 
 Key options:
-- `--output`: Directory for the downloaded audio files (defaults to `downloads`).
+- `--output`: Base directory for downloads (defaults to `downloads`). A subfolder with the
+  playlist name is created automatically (e.g., `downloads/<playlist-name>/`).
 - `--limit`: Only process the first N tracks from the CSV.
 - `--no-album`: Build search queries without the album name.
 - `--search-provider`: Choose YouTube Music (default) or regular YouTube search.
@@ -40,7 +41,7 @@ Example `exportify_downloader.toml`:
 ```
 [exportify_downloader]
 csv_file = "playlist.csv"      # Optional: let the tool read this CSV without a CLI argument
-output = "downloads"            # Where audio files and the M3U playlist are written
+output = "downloads"            # Base folder; the playlist name becomes a subfolder
 limit = 0                       # 0 means no limit
 include_album = true            # Include album name in search queries
 audio_format = "mp3"            # Use "best" to keep the source format
@@ -59,13 +60,15 @@ dry_run = false                 # Only print queries when true
 4. Metadata (title, artist, album when available) and the YouTube Music thumbnail are embedded
    into the output file so your library software can identify each track.
 5. After the downloads finish, an M3U playlist file (named after the CSV, e.g., `playlist.m3u`)
-   is written to the output directory with relative paths to the downloaded tracks so you can
-   load the set on a player that supports playlists.
-6. Files are saved with yt-dlp's default title-based naming in the chosen output directory.
+   is written inside the playlist-named subfolder with relative paths to the downloaded tracks
+   so you can load the set on a player that supports playlists.
+6. Files are saved with yt-dlp's default title-based naming in the playlist-named subfolder
+   under your chosen output base directory.
 
 ## Example
 ```
 python exportify_downloader.py example.csv --output playlist_downloads --limit 10
 ```
 
-This will download the first ten tracks from `example.csv` into `playlist_downloads`.
+This will download the first ten tracks from `example.csv` into
+`playlist_downloads/example/`.

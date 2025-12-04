@@ -396,14 +396,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"CSV file not found: {csv_path}", file=sys.stderr)
         return 1
 
-    args.output.mkdir(parents=True, exist_ok=True)
+    playlist_dir = args.output / csv_path.stem
+    playlist_dir.mkdir(parents=True, exist_ok=True)
+
     tracks = list(read_tracks(csv_path, args.limit))
     if not tracks:
         print("No tracks found in CSV. Nothing to download.")
         return 0
 
     print(
-        f"Found {len(tracks)} tracks. Output directory: {args.output.resolve()}"
+        f"Found {len(tracks)} tracks. Output directory: {playlist_dir.resolve()}"
     )
     downloaded_files: List[Path] = []
 
@@ -418,12 +420,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                 downloaded_files.append(Path(filepath))
 
     downloader = build_downloader(
-        args.output, args.audio_format, args.audio_quality, progress_hook
+        playlist_dir, args.audio_format, args.audio_quality, progress_hook
     )
     extracted_files = download_tracks(
         tracks,
         downloader,
-        args.output,
+        playlist_dir,
         include_album=args.include_album,
         dry_run=args.dry_run,
         search_provider=args.search_provider,
@@ -433,8 +435,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         if file_path not in downloaded_files:
             downloaded_files.append(file_path)
 
-    playlist_path = args.output / f"{csv_path.stem}.m3u"
-    write_m3u_playlist(playlist_path, downloaded_files, args.output)
+    playlist_path = playlist_dir / f"{csv_path.stem}.m3u"
+    write_m3u_playlist(playlist_path, downloaded_files, playlist_dir)
     return 0
 
 
