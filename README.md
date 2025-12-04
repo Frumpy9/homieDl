@@ -17,7 +17,20 @@ pip install -r requirements.txt
 ## Usage
 ```
 python exportify_downloader.py <playlist.csv> [--output downloads] [--limit 5]
+python exportify_downloader.py --gui  # launch a simple GUI
 ```
+
+### Quick start
+1. Install dependencies: `pip install -r requirements.txt` (FFmpeg must be on your `PATH`).
+2. Command line: run `python exportify_downloader.py your_playlist.csv --output downloads`.
+3. GUI: run `python exportify_downloader.py --gui`, or simply run `python exportify_downloader.py`
+   without arguments to open the GUI if no CSV is provided. Use the "Browse" buttons to pick a CSV
+   and output folder, configure options, and click **Download** to watch progress updates.
+
+### GUI mode
+The GUI lets you browse for the CSV and output folder, toggle album inclusion and dry-run mode,
+choose the search provider, and set audio format, quality, and rate limits. Progress, status text,
+and log messages are streamed into the window while downloads run in the background.
 
 Key options:
 - `--output`: Base directory for downloads (defaults to `downloads`). A subfolder with the
