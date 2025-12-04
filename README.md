@@ -29,6 +29,7 @@ Key options:
   original stream without conversion.
 - `--audio-quality`: FFmpeg audio quality/bitrate (e.g., `192`, `320`).
 - `--dry-run`: Show the generated search queries without downloading anything.
+- `--max-downloads-per-hour`: Throttle throughput for large batches (default: 100).
 
 ### Config file
 - A TOML config named `exportify_downloader.toml` is read by default (override with
@@ -48,6 +49,7 @@ audio_format = "mp3"            # Use "best" to keep the source format
 audio_quality = "192"           # FFmpeg bitrate when converting
 search_provider = "youtube-music"  # Or "youtube"
 dry_run = false                 # Only print queries when true
+max_downloads_per_hour = 100    # Upper bound on songs processed each hour
 ```
 
 ## How it works

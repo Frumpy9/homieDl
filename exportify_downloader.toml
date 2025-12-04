@@ -10,3 +10,4 @@ audio_format = "mp3"                 # Use "best" to keep source format
 audio_quality = "192"                # Used when converting with FFmpeg
 search_provider = "youtube-music"    # "youtube-music" or "youtube"
 dry_run = false                      # When true, only print search queries
+max_downloads_per_hour = 100         # Throttle to at most this many songs per hour
