@@ -22,8 +22,8 @@ python exportify_downloader.py --gui  # launch a simple GUI
 
 ### GUI mode
 The GUI lets you browse for the CSV and output folder, toggle album inclusion and dry-run mode,
-choose the search provider, and set audio format, quality, and rate limits. Progress and log
-messages are streamed into the window while downloads run in the background.
+choose the search provider, and set audio format, quality, and rate limits. Progress, status text,
+and log messages are streamed into the window while downloads run in the background.
 
 Key options:
 - `--output`: Base directory for downloads (defaults to `downloads`). A subfolder with the

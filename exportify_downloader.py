@@ -19,7 +19,10 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Deque, Iterable, List, Optional, Tuple
+from typing import Callable, Deque, Iterable, List, Optional, Tuple
+
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
 
 try:
     import tomllib  # Python 3.11+
@@ -374,6 +377,8 @@ def download_tracks(
     dry_run: bool,
     search_provider: str,
     max_downloads_per_hour: int = 100,
+    progress_callback: Optional[Callable[[str, int, int, str], None]] = None,
+    total_tracks: Optional[int] = None,
 ) -> List[Path]:
     downloaded_files: List[Path] = []
     rate_limiter = DownloadRateLimiter(max_downloads_per_hour)
@@ -390,7 +395,14 @@ def download_tracks(
     else:
         ytmusic_client = None
 
-    for track in tracks:
+    resolved_total = total_tracks
+    if resolved_total is None:
+        try:
+            resolved_total = len(tracks)  # type: ignore[arg-type]
+        except TypeError:
+            resolved_total = None
+
+    for index, track in enumerate(tracks, start=1):
         terms = track.build_terms(include_album=include_album)
         if not terms:
             print("Skipping row with missing track and artist info.")
@@ -405,8 +417,13 @@ def download_tracks(
                 query = url
                 display = matched_title or url
 
+        if progress_callback:
+            progress_callback("start", index, resolved_total or 0, display)
+
         print(f"Searching and downloading: {display}")
         if dry_run:
+            if progress_callback:
+                progress_callback("finish", index, resolved_total or 0, display)
             continue
 
         try:
@@ -437,11 +454,18 @@ def download_tracks(
                 for entry in info:
                     if isinstance(entry, dict):
                         record_filepath(entry)
+
+            if progress_callback:
+                progress_callback("finish", index, resolved_total or 0, display)
         except yt_dlp.utils.DownloadError as exc:  # type: ignore[attr-defined]
             print(f"Failed to download {query}: {exc}")
+            if progress_callback:
+                progress_callback("error", index, resolved_total or 0, f"Failed: {display}")
         except AttributeError as exc:
             # Protect against unexpected result shapes that are not dictionaries.
             print(f"Skipped malformed download result for {display}: {exc}")
+            if progress_callback:
+                progress_callback("error", index, resolved_total or 0, f"Skipped: {display}")
 
     return downloaded_files
 
@@ -465,7 +489,9 @@ def write_m3u_playlist(playlist_path: Path, downloaded_files: List[Path], output
     print(f"Created playlist: {playlist_path}")
 
 
-def run_downloader(args: argparse.Namespace) -> int:
+def run_downloader(
+    args: argparse.Namespace, progress_callback: Optional[Callable[[str, int, int, str], None]] = None
+) -> int:
     """Execute the downloader with already-resolved settings."""
 
     if not args.csv_file:
@@ -511,6 +537,8 @@ def run_downloader(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
         search_provider=args.search_provider,
         max_downloads_per_hour=args.max_downloads_per_hour,
+        progress_callback=progress_callback,
+        total_tracks=len(tracks),
     )
 
     for file_path in extracted_files:
@@ -599,6 +627,14 @@ def launch_gui(defaults: argparse.Namespace) -> None:
 
     log_frame = ttk.LabelFrame(root, text="Progress", padding=10)
     log_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+
+    status_var = tk.StringVar(value="Idle")
+    ttk.Label(log_frame, textvariable=status_var, anchor="w").pack(fill="x")
+
+    progress_var = tk.DoubleVar(value=0)
+    progress_bar = ttk.Progressbar(log_frame, variable=progress_var, maximum=1)
+    progress_bar.pack(fill="x", pady=(4, 8))
+
     log_text = tk.Text(log_frame, wrap="word")
     log_text.pack(fill="both", expand=True)
 
@@ -626,6 +662,10 @@ def launch_gui(defaults: argparse.Namespace) -> None:
             messagebox.showerror("Invalid rate limit", "Max downloads per hour must be a number.")
             return
 
+        progress_var.set(0)
+        status_var.set("Starting...")
+        progress_bar.configure(maximum=1)
+
         args = argparse.Namespace(
             csv_file=Path(csv_path),
             output=Path(output_base),
@@ -646,14 +686,37 @@ def launch_gui(defaults: argparse.Namespace) -> None:
         log_text.see("end")
         download_button.config(state=tk.DISABLED)
 
+        def progress_update(event: str, index: int, total: int, description: str) -> None:
+            def update_ui() -> None:
+                if total <= 0:
+                    total_value = max(progress_bar["maximum"], index)
+                else:
+                    total_value = total
+
+                progress_bar.configure(maximum=total_value)
+
+                if event == "start":
+                    progress_var.set(max(index - 1, 0))
+                elif event in {"finish", "error"}:
+                    progress_var.set(index)
+
+                if total_value:
+                    status_var.set(f"{event.title()} {index}/{int(total_value)}: {description}")
+                else:
+                    status_var.set(f"{event.title()}: {description}")
+
+            root.after(0, update_ui)
+
         def worker() -> None:
             writer = TextRedirector(log_text)
             with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
-                result = run_downloader(args)
+                result = run_downloader(args, progress_callback=progress_update)
                 if result == 0:
                     print("Downloads complete.")
+                    status_var.set("Downloads complete.")
                 else:
                     print("Downloader exited with errors.")
+                    status_var.set("Downloader exited with errors.")
 
             root.after(0, lambda: download_button.config(state=tk.NORMAL))
 
