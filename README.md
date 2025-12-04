@@ -17,7 +17,13 @@ pip install -r requirements.txt
 ## Usage
 ```
 python exportify_downloader.py <playlist.csv> [--output downloads] [--limit 5]
+python exportify_downloader.py --gui  # launch a simple GUI
 ```
+
+### GUI mode
+The GUI lets you browse for the CSV and output folder, toggle album inclusion and dry-run mode,
+choose the search provider, and set audio format, quality, and rate limits. Progress and log
+messages are streamed into the window while downloads run in the background.
 
 Key options:
 - `--output`: Base directory for downloads (defaults to `downloads`). A subfolder with the

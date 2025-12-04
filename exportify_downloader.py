@@ -11,8 +11,10 @@ options.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import sys
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -86,6 +88,23 @@ class DownloadRateLimiter:
                 f"Waiting ~{wait_minutes:.1f} minutes before continuing..."
             )
             time.sleep(sleep_for)
+
+
+class TextRedirector:
+    """Forward stdout/stderr writes into a Tkinter text widget."""
+
+    def __init__(self, widget: tk.Text):
+        self.widget = widget
+
+    def write(self, message: str) -> None:  # pragma: no cover - UI side effect
+        def append() -> None:
+            self.widget.insert("end", message)
+            self.widget.see("end")
+
+        self.widget.after(0, append)
+
+    def flush(self) -> None:
+        return
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -166,6 +185,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         dest="max_downloads_per_hour",
         default=None,
         help="Throttle downloads to this many songs per hour (default: 100)",
+    )
+    parser.add_argument(
+        "--gui",
+        action="store_true",
+        help="Launch a simple GUI for selecting options instead of CLI flags",
     )
     return parser.parse_args(argv)
 
@@ -441,8 +465,8 @@ def write_m3u_playlist(playlist_path: Path, downloaded_files: List[Path], output
     print(f"Created playlist: {playlist_path}")
 
 
-def main(argv: Optional[List[str]] = None) -> int:
-    args = resolve_settings(parse_args(argv))
+def run_downloader(args: argparse.Namespace) -> int:
+    """Execute the downloader with already-resolved settings."""
 
     if not args.csv_file:
         print("No CSV file provided via CLI or config.", file=sys.stderr)
@@ -496,6 +520,158 @@ def main(argv: Optional[List[str]] = None) -> int:
     playlist_path = playlist_dir / f"{csv_path.stem}.m3u"
     write_m3u_playlist(playlist_path, downloaded_files, playlist_dir)
     return 0
+
+
+def launch_gui(defaults: argparse.Namespace) -> None:
+    """Launch a lightweight Tkinter GUI for selecting downloader options."""
+
+    root = tk.Tk()
+    root.title("Exportify YouTube Music Downloader")
+    root.geometry("700x500")
+
+    csv_var = tk.StringVar(value=str(defaults.csv_file or ""))
+    output_var = tk.StringVar(value=str(defaults.output) if defaults.output else "")
+    limit_var = tk.StringVar(value=str(defaults.limit or ""))
+    album_var = tk.BooleanVar(value=defaults.include_album)
+    dry_run_var = tk.BooleanVar(value=defaults.dry_run)
+    audio_format_var = tk.StringVar(value=defaults.audio_format)
+    audio_quality_var = tk.StringVar(value=defaults.audio_quality)
+    provider_var = tk.StringVar(value=defaults.search_provider)
+    max_per_hour_var = tk.StringVar(value=str(defaults.max_downloads_per_hour))
+
+    def browse_csv() -> None:
+        path = filedialog.askopenfilename(
+            title="Select Exportify CSV", filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+        )
+        if path:
+            csv_var.set(path)
+
+    def browse_output() -> None:
+        path = filedialog.askdirectory(title="Select output directory")
+        if path:
+            output_var.set(path)
+
+    form = ttk.Frame(root, padding=10)
+    form.grid(row=0, column=0, sticky="nsew")
+    root.columnconfigure(0, weight=1)
+    root.rowconfigure(1, weight=1)
+
+    def add_row(label: str, widget: tk.Widget, row: int, button: Optional[tk.Widget] = None) -> None:
+        ttk.Label(form, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=4)
+        widget.grid(row=row, column=1, sticky="ew", pady=4)
+        form.columnconfigure(1, weight=1)
+        if button:
+            button.grid(row=row, column=2, padx=4, pady=4)
+
+    add_row(
+        "CSV file",
+        ttk.Entry(form, textvariable=csv_var),
+        0,
+        ttk.Button(form, text="Browse", command=browse_csv),
+    )
+    add_row(
+        "Output folder",
+        ttk.Entry(form, textvariable=output_var),
+        1,
+        ttk.Button(form, text="Browse", command=browse_output),
+    )
+    add_row("Limit (0 = all)", ttk.Entry(form, textvariable=limit_var), 2)
+    add_row("Audio format", ttk.Entry(form, textvariable=audio_format_var), 3)
+    add_row("Audio quality", ttk.Entry(form, textvariable=audio_quality_var), 4)
+    add_row(
+        "Search provider",
+        ttk.Combobox(
+            form,
+            textvariable=provider_var,
+            values=["youtube-music", "youtube"],
+            state="readonly",
+        ),
+        5,
+    )
+    add_row("Max downloads/hour", ttk.Entry(form, textvariable=max_per_hour_var), 6)
+
+    flags = ttk.Frame(form)
+    flags.grid(row=7, column=0, columnspan=3, sticky="w", pady=6)
+    ttk.Checkbutton(flags, text="Include album in search", variable=album_var).grid(
+        row=0, column=0, padx=(0, 12)
+    )
+    ttk.Checkbutton(flags, text="Dry run", variable=dry_run_var).grid(row=0, column=1)
+
+    log_frame = ttk.LabelFrame(root, text="Progress", padding=10)
+    log_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+    log_text = tk.Text(log_frame, wrap="word")
+    log_text.pack(fill="both", expand=True)
+
+    def start_download() -> None:
+        csv_path = csv_var.get().strip()
+        if not csv_path:
+            messagebox.showerror("Missing CSV", "Please select a CSV file to download from.")
+            return
+
+        output_base = output_var.get().strip() or str(defaults.output)
+
+        try:
+            limit_val = int(limit_var.get()) if limit_var.get().strip() else None
+            if limit_val == 0:
+                limit_val = None
+        except ValueError:
+            messagebox.showerror("Invalid limit", "Limit must be a number.")
+            return
+
+        try:
+            max_per_hour = (
+                int(max_per_hour_var.get()) if max_per_hour_var.get().strip() else defaults.max_downloads_per_hour
+            )
+        except ValueError:
+            messagebox.showerror("Invalid rate limit", "Max downloads per hour must be a number.")
+            return
+
+        args = argparse.Namespace(
+            csv_file=Path(csv_path),
+            output=Path(output_base),
+            limit=limit_val,
+            include_album=album_var.get(),
+            audio_format=audio_format_var.get() or defaults.audio_format,
+            audio_quality=audio_quality_var.get() or defaults.audio_quality,
+            dry_run=dry_run_var.get(),
+            search_provider=provider_var.get(),
+            max_downloads_per_hour=max_per_hour,
+            config=defaults.config,
+            gui=False,
+        )
+
+        log_text.config(state="normal")
+        log_text.delete("1.0", "end")
+        log_text.insert("end", "Starting downloads...\n")
+        log_text.see("end")
+        download_button.config(state=tk.DISABLED)
+
+        def worker() -> None:
+            writer = TextRedirector(log_text)
+            with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
+                result = run_downloader(args)
+                if result == 0:
+                    print("Downloads complete.")
+                else:
+                    print("Downloader exited with errors.")
+
+            root.after(0, lambda: download_button.config(state=tk.NORMAL))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    download_button = ttk.Button(root, text="Start Download", command=start_download)
+    download_button.grid(row=2, column=0, pady=(0, 10))
+
+    root.mainloop()
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    args = resolve_settings(parse_args(argv))
+    if getattr(args, "gui", False):
+        launch_gui(args)
+        return 0
+
+    return run_downloader(args)
 
 
 if __name__ == "__main__":
