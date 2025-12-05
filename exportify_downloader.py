@@ -360,6 +360,18 @@ def build_downloader(
 ) -> yt_dlp.YoutubeDL:
     """Create a configured YoutubeDL instance for audio downloads."""
 
+    def enforce_filesize_limit(info_dict, *, incomplete=False):
+        """Skip downloads that exceed the maximum allowed filesize."""
+
+        for key in ("filesize", "filesize_approx"):
+            size = info_dict.get(key)
+            if size is not None and size > MAX_AUDIO_FILESIZE:
+                return (
+                    f"{key} {size} exceeds cap of {MAX_AUDIO_FILESIZE} bytes; skipping"
+                )
+
+        return None
+
     ydl_opts = {
         "format": (
             "bestaudio[filesize<={limit}]/"
@@ -373,10 +385,7 @@ def build_downloader(
         "embedthumbnail": True,
         "writethumbnail": True,
         "progress_hooks": [progress_hook],
-        "match_filter": yt_dlp.utils.match_filter_func(
-            f"(filesize?filesize<={MAX_AUDIO_FILESIZE}:True)&"
-            f"(filesize_approx?filesize_approx<={MAX_AUDIO_FILESIZE}:True)"
-        ),
+        "match_filter": enforce_filesize_limit,
     }
 
     postprocessors = [
