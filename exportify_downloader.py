@@ -477,6 +477,7 @@ def download_tracks(
     max_downloads_per_hour: int = 100,
     progress_callback: Optional[Callable[[str, int, int, str], None]] = None,
     total_tracks: Optional[int] = None,
+    start_index: int = 1,
     pause_event: Optional[threading.Event] = None,
     cancel_event: Optional[threading.Event] = None,
     existing_track_keys: Optional[Set[str]] = None,
@@ -507,11 +508,11 @@ def download_tracks(
     resolved_total = total_tracks
     if resolved_total is None:
         try:
-            resolved_total = len(tracks)  # type: ignore[arg-type]
+            resolved_total = (start_index - 1) + len(tracks)  # type: ignore[arg-type]
         except TypeError:
             resolved_total = None
 
-    for index, track in enumerate(tracks, start=1):
+    for index, track in enumerate(tracks, start=start_index):
         if cancel_event and cancel_event.is_set():
             raise DownloadCancelled()
 
@@ -767,7 +768,8 @@ def run_downloader_for_csv(
             audio_format=args.audio_format,
             max_downloads_per_hour=args.max_downloads_per_hour,
             progress_callback=progress_callback,
-            total_tracks=len(tracks),
+            total_tracks=(args.start - 1) + len(tracks),
+            start_index=args.start,
             pause_event=pause_event,
             cancel_event=cancel_event,
             existing_track_keys=existing_track_keys,
