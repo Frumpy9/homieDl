@@ -682,6 +682,29 @@ def write_m3u_playlist(playlist_path: Path, downloaded_files: List[Path], output
     print(f"Created playlist: {playlist_path}")
 
 
+def create_backup_m3u_from_downloads(
+    csv_path: Path, output_base: Path, log: Callable[[str], None] = print
+) -> None:
+    """Create a backup M3U using existing MP3 files for the given CSV."""
+
+    playlist_dir = output_base / csv_path.stem
+    if not playlist_dir.exists():
+        log(f"No download folder found for {csv_path.name} at {playlist_dir}")
+        return
+
+    mp3_files = sorted(
+        (path for path in playlist_dir.iterdir() if path.suffix.lower() == ".mp3"),
+        key=lambda p: p.name.lower(),
+    )
+
+    if not mp3_files:
+        log(f"No MP3 files found in {playlist_dir}; skipping backup playlist creation.")
+        return
+
+    backup_playlist = playlist_dir / f"{csv_path.stem}.m3u"
+    write_m3u_playlist(backup_playlist, mp3_files, playlist_dir)
+
+
 def resolve_final_audio_paths(downloaded_files: List[Path], audio_format: str) -> List[Path]:
     """Prefer post-processed audio files (e.g., MP3) over original downloads."""
 
@@ -1013,6 +1036,11 @@ def launch_gui(defaults: argparse.Namespace) -> None:
     log_text.tag_configure("skip", foreground="#57606a")
     log_text.pack(fill="both", expand=True)
 
+    def append_log_line(message: str) -> None:
+        log_text.config(state="normal")
+        log_text.insert("end", message + "\n")
+        log_text.see("end")
+
     track_widgets: Dict[int, Tuple[ttk.Progressbar, tk.DoubleVar, tk.StringVar]] = {}
 
     def reset_track_statuses() -> None:
@@ -1075,6 +1103,29 @@ def launch_gui(defaults: argparse.Namespace) -> None:
         pause_event.clear()
         pause_button.config(text="Pause")
         status_var.set("Cancelling downloads...")
+
+    def create_m3u_backup() -> None:
+        nonlocal download_thread
+        if download_thread and download_thread.is_alive():
+            messagebox.showinfo(
+                "Download in progress",
+                "Please wait for downloads to finish before creating backup playlists.",
+            )
+            return
+
+        if not csv_paths:
+            messagebox.showerror(
+                "Missing CSV", "Select at least one CSV to build backup playlists."
+            )
+            return
+
+        output_base = Path(output_var.get().strip() or str(defaults.output))
+        append_log_line("Creating backup playlists...")
+
+        for csv_str in csv_paths:
+            create_backup_m3u_from_downloads(Path(csv_str), output_base, log=append_log_line)
+
+        append_log_line("Backup playlist creation finished.")
 
     def start_download() -> None:
         nonlocal download_thread
@@ -1217,6 +1268,9 @@ def launch_gui(defaults: argparse.Namespace) -> None:
     pause_button.grid(row=0, column=1, padx=4)
     cancel_button = ttk.Button(controls, text="Cancel", command=cancel_download, state=tk.DISABLED)
     cancel_button.grid(row=0, column=2, padx=(4, 0))
+
+    backup_button = ttk.Button(controls, text="Create M3U Backup", command=create_m3u_backup)
+    backup_button.grid(row=1, column=0, columnspan=3, pady=(6, 0))
 
     root.mainloop()
 
