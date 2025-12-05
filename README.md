@@ -16,7 +16,7 @@ pip install -r requirements.txt
 
 ## Usage
 ```
-python exportify_downloader.py <playlist.csv> [--output downloads] [--limit 5]
+python exportify_downloader.py <playlist.csv> [--output downloads] [--limit 5] [--start 1]
 python exportify_downloader.py --gui  # launch a simple GUI
 ```
 
@@ -39,6 +39,8 @@ Key options:
 - `--output`: Base directory for downloads (defaults to `downloads`). A subfolder with the
   playlist name is created automatically (e.g., `downloads/<playlist-name>/`).
 - `--limit`: Only process the first N tracks from the CSV.
+- `--start`: Begin processing at this 1-based row number (e.g., `--start 100` starts at the
+  100th song in the CSV). Defaults to 1.
 - `--no-album`: Build search queries without the album name.
 - `--search-provider`: Choose YouTube Music (default) or regular YouTube search.
 - `--audio-format`: Audio format passed to FFmpeg (default: `mp3`). Use `best` to keep the
@@ -60,6 +62,7 @@ Example `exportify_downloader.toml`:
 csv_file = "playlist.csv"      # Optional: let the tool read this CSV without a CLI argument
 output = "downloads"            # Base folder; the playlist name becomes a subfolder
 limit = 0                       # 0 means no limit
+start = 1                       # 1-based starting row within the CSV
 include_album = true            # Include album name in search queries
 audio_format = "mp3"            # Use "best" to keep the source format
 audio_quality = "192"           # FFmpeg bitrate when converting

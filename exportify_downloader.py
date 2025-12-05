@@ -187,6 +187,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Optional limit on the number of tracks to process",
     )
     parser.add_argument(
+        "--start",
+        type=int,
+        default=None,
+        help="1-based position in the CSV to begin processing (default: 1)",
+    )
+    parser.add_argument(
         "--no-album",
         action="store_true",
         dest="include_album",
@@ -274,6 +280,7 @@ def resolve_settings(args: argparse.Namespace) -> argparse.Namespace:
     defaults = {
         "output": Path("downloads"),
         "limit": None,
+        "start": 1,
         "include_album": True,
         "audio_format": "mp3",
         "audio_quality": "192",
@@ -289,6 +296,7 @@ def resolve_settings(args: argparse.Namespace) -> argparse.Namespace:
         "csv_files": config_section.get("csv_files"),
         "output": Path(config_section["output"]) if config_section.get("output") else None,
         "limit": config_section.get("limit"),
+        "start": config_section.get("start"),
         "include_album": config_section.get("include_album"),
         "audio_format": config_section.get("audio_format"),
         "audio_quality": config_section.get("audio_quality"),
@@ -308,6 +316,9 @@ def resolve_settings(args: argparse.Namespace) -> argparse.Namespace:
     resolved.limit = args.limit if args.limit is not None else config_settings["limit"]
     if resolved.limit == 0:
         resolved.limit = None
+    resolved.start = args.start if args.start is not None else config_settings["start"]
+    if resolved.start is None or resolved.start <= 0:
+        resolved.start = defaults["start"]
     resolved.include_album = (
         args.include_album
         if args.include_album is not None
@@ -338,13 +349,17 @@ def resolve_settings(args: argparse.Namespace) -> argparse.Namespace:
     return resolved
 
 
-def read_tracks(csv_path: Path, limit: Optional[int]) -> Iterable[Track]:
+def read_tracks(csv_path: Path, limit: Optional[int], start: int) -> Iterable[Track]:
     """Yield Track objects from the Exportify CSV."""
 
     with csv_path.open(newline="", encoding="utf-8") as csv_file:
         reader = csv.DictReader(csv_file)
-        for index, row in enumerate(reader):
-            if limit is not None and index >= limit:
+        yielded = 0
+        for index, row in enumerate(reader, start=1):
+            if index < start:
+                continue
+
+            if limit is not None and yielded >= limit:
                 break
 
             try:
@@ -361,6 +376,7 @@ def read_tracks(csv_path: Path, limit: Optional[int]) -> Iterable[Track]:
                     album=row.get("Album Name") or "",
                 )
             yield track
+            yielded += 1
 
 
 MAX_AUDIO_FILESIZE = 100 * 1024 * 1024  # 100 MB ceiling per track
@@ -717,7 +733,7 @@ def run_downloader_for_csv(
             cleaned_manifest[track_key] = stored_path
             existing_track_keys.add(track_key)
 
-    tracks = list(read_tracks(csv_path, args.limit))
+    tracks = list(read_tracks(csv_path, args.limit, args.start))
     if not tracks:
         print("No tracks found in CSV. Nothing to download.")
         return 0
@@ -835,6 +851,7 @@ def launch_gui(defaults: argparse.Namespace) -> None:
     csv_display_var = tk.StringVar()
     output_var = tk.StringVar(value=str(defaults.output) if defaults.output else "")
     limit_var = tk.StringVar(value=str(defaults.limit or ""))
+    start_var = tk.StringVar(value=str(defaults.start or 1))
     album_var = tk.BooleanVar(value=defaults.include_album)
     dry_run_var = tk.BooleanVar(value=defaults.dry_run)
     audio_format_var = tk.StringVar(value=defaults.audio_format)
@@ -901,8 +918,9 @@ def launch_gui(defaults: argparse.Namespace) -> None:
         ttk.Button(form, text="Browse", command=browse_output),
     )
     add_row("Limit (0 = all)", ttk.Entry(form, textvariable=limit_var), 2)
-    add_row("Audio format", ttk.Entry(form, textvariable=audio_format_var), 3)
-    add_row("Audio quality", ttk.Entry(form, textvariable=audio_quality_var), 4)
+    add_row("Start at row", ttk.Entry(form, textvariable=start_var), 3)
+    add_row("Audio format", ttk.Entry(form, textvariable=audio_format_var), 4)
+    add_row("Audio quality", ttk.Entry(form, textvariable=audio_quality_var), 5)
     add_row(
         "Search provider",
         ttk.Combobox(
@@ -911,12 +929,12 @@ def launch_gui(defaults: argparse.Namespace) -> None:
             values=["youtube-music", "youtube"],
             state="readonly",
         ),
-        5,
+        6,
     )
-    add_row("Max downloads/hour", ttk.Entry(form, textvariable=max_per_hour_var), 6)
+    add_row("Max downloads/hour", ttk.Entry(form, textvariable=max_per_hour_var), 7)
 
     flags = ttk.Frame(form)
-    flags.grid(row=7, column=0, columnspan=3, sticky="w", pady=6)
+    flags.grid(row=8, column=0, columnspan=3, sticky="w", pady=6)
     ttk.Checkbutton(flags, text="Include album in search", variable=album_var).grid(
         row=0, column=0, padx=(0, 12)
     )
@@ -1073,6 +1091,16 @@ def launch_gui(defaults: argparse.Namespace) -> None:
             return
 
         try:
+            start_val = int(start_var.get()) if start_var.get().strip() else defaults.start
+            if start_val <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror(
+                "Invalid start position", "Start position must be 1 or greater."
+            )
+            return
+
+        try:
             max_per_hour = (
                 int(max_per_hour_var.get()) if max_per_hour_var.get().strip() else defaults.max_downloads_per_hour
             )
@@ -1094,6 +1122,7 @@ def launch_gui(defaults: argparse.Namespace) -> None:
             csv_file=selected_csvs[0] if selected_csvs else None,
             output=Path(output_base),
             limit=limit_val,
+            start=start_val,
             include_album=album_var.get(),
             audio_format=audio_format_var.get() or defaults.audio_format,
             audio_quality=audio_quality_var.get() or defaults.audio_quality,
