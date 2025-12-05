@@ -538,6 +538,29 @@ def write_m3u_playlist(playlist_path: Path, downloaded_files: List[Path], output
     print(f"Created playlist: {playlist_path}")
 
 
+def resolve_final_audio_paths(downloaded_files: List[Path], audio_format: str) -> List[Path]:
+    """Prefer post-processed audio files (e.g., MP3) over original downloads."""
+
+    if audio_format == "best":
+        return downloaded_files
+
+    resolved: List[Path] = []
+    seen = set()
+    for path in downloaded_files:
+        final_path = path
+        target_ext = f".{audio_format}"
+        if path.suffix.lower() != target_ext.lower():
+            candidate = path.with_suffix(target_ext)
+            if candidate.exists():
+                final_path = candidate
+
+        if final_path not in seen:
+            resolved.append(final_path)
+            seen.add(final_path)
+
+    return resolved
+
+
 def run_downloader_for_csv(
     csv_path: Path,
     args: argparse.Namespace,
@@ -599,6 +622,7 @@ def run_downloader_for_csv(
         if file_path not in downloaded_files:
             downloaded_files.append(file_path)
 
+    downloaded_files = resolve_final_audio_paths(downloaded_files, args.audio_format)
     playlist_path = playlist_dir / f"{csv_path.stem}.m3u"
     write_m3u_playlist(playlist_path, downloaded_files, playlist_dir)
     return 0
