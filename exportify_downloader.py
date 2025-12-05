@@ -718,8 +718,9 @@ def run_downloader_for_csv(
             stored_path = final_path
 
         cleaned_manifest[track_key] = str(stored_path)
+        existing_track_keys.add(track_key)
+        save_download_manifest(manifest_path, cleaned_manifest)
 
-    save_download_manifest(manifest_path, cleaned_manifest)
     return 0
 
 
