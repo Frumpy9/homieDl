@@ -597,7 +597,7 @@ def launch_gui(defaults: argparse.Namespace) -> None:
     csv_paths: List[str] = [str(path) for path in getattr(defaults, "csv_files", [])] or (
         [str(defaults.csv_file)] if getattr(defaults, "csv_file", None) else []
     )
-    csv_state = {path: False for path in csv_paths}
+    csv_status = {path: "Pending" for path in csv_paths}
     csv_display_var = tk.StringVar()
     output_var = tk.StringVar(value=str(defaults.output) if defaults.output else "")
     limit_var = tk.StringVar(value=str(defaults.limit or ""))
@@ -615,11 +615,23 @@ def launch_gui(defaults: argparse.Namespace) -> None:
 
         lines = []
         for path in csv_paths:
-            prefix = "✔" if csv_state.get(path) else "•"
-            lines.append(f"{prefix} {path}")
+            status_label = csv_status.get(path, "Pending")
+            lines.append(f"{path} ({status_label})")
 
         display_value = "\n".join(lines)
         csv_display_var.set(display_value)
+
+    def refresh_status_view() -> None:
+        for row in status_tree.get_children():
+            status_tree.delete(row)
+
+        for path in csv_paths:
+            status_tree.insert("", "end", iid=path, values=(Path(path).name, csv_status.get(path, "Pending")))
+
+    def set_csv_status(path: str, status: str) -> None:
+        csv_status[path] = status
+        refresh_status_view()
+        refresh_csv_display()
 
     def browse_csvs() -> None:
         paths = filedialog.askopenfilenames(
@@ -629,15 +641,15 @@ def launch_gui(defaults: argparse.Namespace) -> None:
             for path in paths:
                 if path not in csv_paths:
                     csv_paths.append(path)
-                    csv_state[path] = False
+                    csv_status[path] = "Pending"
             refresh_csv_display()
+            refresh_status_view()
 
     def clear_csvs() -> None:
         csv_paths.clear()
-        csv_state.clear()
+        csv_status.clear()
         refresh_csv_display()
-
-    refresh_csv_display()
+        refresh_status_view()
 
     def browse_output() -> None:
         path = filedialog.askdirectory(title="Select output directory")
@@ -646,7 +658,9 @@ def launch_gui(defaults: argparse.Namespace) -> None:
 
     form = ttk.Frame(root, padding=10)
     form.grid(row=0, column=0, sticky="nsew")
-    root.columnconfigure(0, weight=1)
+    root.columnconfigure(0, weight=2)
+    root.columnconfigure(1, weight=1)
+    root.rowconfigure(0, weight=1)
     root.rowconfigure(1, weight=1)
 
     def add_row(label: str, widget: tk.Widget, row: int, button: Optional[tk.Widget] = None) -> None:
@@ -696,8 +710,27 @@ def launch_gui(defaults: argparse.Namespace) -> None:
     )
     ttk.Checkbutton(flags, text="Dry run", variable=dry_run_var).grid(row=0, column=1)
 
+    status_frame = ttk.LabelFrame(root, text="CSV Status", padding=10)
+    status_frame.grid(row=0, column=1, sticky="nsew", padx=(0, 10), pady=10)
+    status_frame.rowconfigure(0, weight=1)
+    status_frame.columnconfigure(0, weight=1)
+
+    status_tree = ttk.Treeview(status_frame, columns=("file", "status"), show="headings", height=12)
+    status_tree.heading("file", text="File")
+    status_tree.heading("status", text="Status")
+    status_tree.column("file", anchor="w", width=220)
+    status_tree.column("status", anchor="center", width=90)
+    status_tree.grid(row=0, column=0, sticky="nsew")
+
+    status_scroll = ttk.Scrollbar(status_frame, orient="vertical", command=status_tree.yview)
+    status_tree.configure(yscrollcommand=status_scroll.set)
+    status_scroll.grid(row=0, column=1, sticky="ns")
+
+    refresh_status_view()
+    refresh_csv_display()
+
     log_frame = ttk.LabelFrame(root, text="Progress", padding=10)
-    log_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+    log_frame.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=10, pady=(0, 10))
 
     status_var = tk.StringVar(value="Idle")
     ttk.Label(log_frame, textvariable=status_var, anchor="w").pack(fill="x")
@@ -738,8 +771,7 @@ def launch_gui(defaults: argparse.Namespace) -> None:
 
         selected_csvs = [Path(path) for path in csv_paths]
         for path in csv_paths:
-            csv_state[path] = False
-        refresh_csv_display()
+            set_csv_status(path, "Queued")
 
         args = argparse.Namespace(
             csv_files=selected_csvs,
@@ -765,14 +797,14 @@ def launch_gui(defaults: argparse.Namespace) -> None:
         def progress_update(event: str, index: int, total: int, description: str) -> None:
             def update_ui() -> None:
                 if event == "file":
+                    set_csv_status(description, "Processing")
                     progress_bar.configure(maximum=1)
                     progress_var.set(0)
                     status_var.set(f"File {index}/{max(total, 1)}: {description}")
                     return
 
                 if event == "file-done":
-                    csv_state[description] = True
-                    refresh_csv_display()
+                    set_csv_status(description, "Completed")
                     progress_bar.configure(maximum=max(total, 1))
                     progress_var.set(index)
                     status_var.set(f"Finished file {index}/{max(total, 1)}: {description}")
