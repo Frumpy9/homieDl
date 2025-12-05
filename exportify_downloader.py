@@ -60,6 +60,10 @@ class Track:
         return " ".join(parts + ["audio"])
 
 
+class DownloadCancelled(Exception):
+    """Raised when a user cancels an in-progress download."""
+
+
 class DownloadRateLimiter:
     """Throttle download throughput to a fixed rate per hour."""
 
@@ -67,13 +71,25 @@ class DownloadRateLimiter:
         self.max_per_hour = max_per_hour
         self._timestamps: Deque[float] = deque()
 
-    def wait_for_slot(self) -> None:
+    def wait_for_slot(
+        self,
+        pause_event: Optional[threading.Event] = None,
+        cancel_event: Optional[threading.Event] = None,
+    ) -> None:
         """Block until a new download is allowed under the hourly cap."""
 
         if self.max_per_hour <= 0:
             return
 
         while True:
+            if cancel_event and cancel_event.is_set():
+                raise DownloadCancelled()
+
+            while pause_event and pause_event.is_set():
+                if cancel_event and cancel_event.is_set():
+                    raise DownloadCancelled()
+                time.sleep(0.1)
+
             now = time.time()
             cutoff = now - 3600
 
@@ -397,9 +413,17 @@ def download_tracks(
     max_downloads_per_hour: int = 100,
     progress_callback: Optional[Callable[[str, int, int, str], None]] = None,
     total_tracks: Optional[int] = None,
+    pause_event: Optional[threading.Event] = None,
+    cancel_event: Optional[threading.Event] = None,
 ) -> List[Path]:
     downloaded_files: List[Path] = []
     rate_limiter = DownloadRateLimiter(max_downloads_per_hour)
+
+    def wait_if_paused() -> None:
+        while pause_event and pause_event.is_set():
+            if cancel_event and cancel_event.is_set():
+                raise DownloadCancelled()
+            time.sleep(0.1)
 
     if search_provider == "youtube-music":
         try:
@@ -421,6 +445,11 @@ def download_tracks(
             resolved_total = None
 
     for index, track in enumerate(tracks, start=1):
+        if cancel_event and cancel_event.is_set():
+            raise DownloadCancelled()
+
+        wait_if_paused()
+
         terms = track.build_terms(include_album=include_album)
         if not terms:
             print("Skipping row with missing track and artist info.")
@@ -445,7 +474,9 @@ def download_tracks(
             continue
 
         try:
-            rate_limiter.wait_for_slot()
+            wait_if_paused()
+            rate_limiter.wait_for_slot(pause_event=pause_event, cancel_event=cancel_event)
+            wait_if_paused()
             info = downloader.extract_info(query, download=True)
             # extract_info may return a playlist of entries. Each entry has already
             # gone through post-processing, so capture their final filepaths when
@@ -508,7 +539,11 @@ def write_m3u_playlist(playlist_path: Path, downloaded_files: List[Path], output
 
 
 def run_downloader_for_csv(
-    csv_path: Path, args: argparse.Namespace, progress_callback: Optional[Callable[[str, int, int, str], None]] = None
+    csv_path: Path,
+    args: argparse.Namespace,
+    progress_callback: Optional[Callable[[str, int, int, str], None]] = None,
+    pause_event: Optional[threading.Event] = None,
+    cancel_event: Optional[threading.Event] = None,
 ) -> int:
     """Execute the downloader for a single CSV file."""
 
@@ -542,17 +577,23 @@ def run_downloader_for_csv(
     downloader = build_downloader(
         playlist_dir, args.audio_format, args.audio_quality, progress_hook
     )
-    extracted_files = download_tracks(
-        tracks,
-        downloader,
-        playlist_dir,
-        include_album=args.include_album,
-        dry_run=args.dry_run,
-        search_provider=args.search_provider,
-        max_downloads_per_hour=args.max_downloads_per_hour,
-        progress_callback=progress_callback,
-        total_tracks=len(tracks),
-    )
+    try:
+        extracted_files = download_tracks(
+            tracks,
+            downloader,
+            playlist_dir,
+            include_album=args.include_album,
+            dry_run=args.dry_run,
+            search_provider=args.search_provider,
+            max_downloads_per_hour=args.max_downloads_per_hour,
+            progress_callback=progress_callback,
+            total_tracks=len(tracks),
+            pause_event=pause_event,
+            cancel_event=cancel_event,
+        )
+    except DownloadCancelled:
+        print("Download cancelled by user.")
+        return 1
 
     for file_path in extracted_files:
         if file_path not in downloaded_files:
@@ -564,7 +605,10 @@ def run_downloader_for_csv(
 
 
 def run_downloader(
-    args: argparse.Namespace, progress_callback: Optional[Callable[[str, int, int, str], None]] = None
+    args: argparse.Namespace,
+    progress_callback: Optional[Callable[[str, int, int, str], None]] = None,
+    pause_event: Optional[threading.Event] = None,
+    cancel_event: Optional[threading.Event] = None,
 ) -> int:
     """Execute the downloader with already-resolved settings."""
 
@@ -578,7 +622,15 @@ def run_downloader(
         print(f"\nProcessing CSV {file_index}/{total_files}: {csv_path}")
         if progress_callback:
             progress_callback("file", file_index, total_files, str(csv_path))
-        result = run_downloader_for_csv(csv_path, args, progress_callback=progress_callback)
+        result = run_downloader_for_csv(
+            csv_path,
+            args,
+            progress_callback=progress_callback,
+            pause_event=pause_event,
+            cancel_event=cancel_event,
+        )
+        if cancel_event and cancel_event.is_set():
+            return 1
         if result != 0:
             status = result
 
@@ -604,6 +656,9 @@ def launch_gui(defaults: argparse.Namespace) -> None:
     audio_quality_var = tk.StringVar(value=defaults.audio_quality)
     provider_var = tk.StringVar(value=defaults.search_provider)
     max_per_hour_var = tk.StringVar(value=str(defaults.max_downloads_per_hour))
+    pause_event = threading.Event()
+    cancel_event = threading.Event()
+    download_thread: Optional[threading.Thread] = None
 
     def refresh_csv_display() -> None:
         display_value = "\n".join(csv_paths) if csv_paths else "No CSVs selected."
@@ -695,7 +750,37 @@ def launch_gui(defaults: argparse.Namespace) -> None:
     log_text = tk.Text(log_frame, wrap="word")
     log_text.pack(fill="both", expand=True)
 
+    def reset_controls() -> None:
+        pause_event.clear()
+        cancel_event.clear()
+        download_button.config(state=tk.NORMAL)
+        pause_button.config(state=tk.DISABLED, text="Pause")
+        cancel_button.config(state=tk.DISABLED)
+
+    def toggle_pause() -> None:
+        nonlocal download_thread
+        if not download_thread or not download_thread.is_alive():
+            return
+        if pause_event.is_set():
+            pause_event.clear()
+            pause_button.config(text="Pause")
+            status_var.set("Resuming downloads...")
+        else:
+            pause_event.set()
+            pause_button.config(text="Resume")
+            status_var.set("Paused")
+
+    def cancel_download() -> None:
+        nonlocal download_thread
+        if not download_thread or not download_thread.is_alive():
+            return
+        cancel_event.set()
+        pause_event.clear()
+        pause_button.config(text="Pause")
+        status_var.set("Cancelling downloads...")
+
     def start_download() -> None:
+        nonlocal download_thread
         if not csv_paths:
             messagebox.showerror("Missing CSV", "Please select at least one CSV file to download from.")
             return
@@ -718,6 +803,8 @@ def launch_gui(defaults: argparse.Namespace) -> None:
             messagebox.showerror("Invalid rate limit", "Max downloads per hour must be a number.")
             return
 
+        cancel_event.clear()
+        pause_event.clear()
         progress_var.set(0)
         status_var.set("Starting...")
         progress_bar.configure(maximum=1)
@@ -744,6 +831,8 @@ def launch_gui(defaults: argparse.Namespace) -> None:
         log_text.insert("end", "Starting downloads...\n")
         log_text.see("end")
         download_button.config(state=tk.DISABLED)
+        pause_button.config(state=tk.NORMAL, text="Pause")
+        cancel_button.config(state=tk.NORMAL)
 
         def progress_update(event: str, index: int, total: int, description: str) -> None:
             def update_ui() -> None:
@@ -775,20 +864,36 @@ def launch_gui(defaults: argparse.Namespace) -> None:
         def worker() -> None:
             writer = TextRedirector(log_text)
             with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
-                result = run_downloader(args, progress_callback=progress_update)
-                if result == 0:
+                result = run_downloader(
+                    args,
+                    progress_callback=progress_update,
+                    pause_event=pause_event,
+                    cancel_event=cancel_event,
+                )
+                if cancel_event.is_set():
+                    print("Downloads cancelled.")
+                    status_var.set("Downloads cancelled.")
+                elif result == 0:
                     print("Downloads complete.")
                     status_var.set("Downloads complete.")
                 else:
                     print("Downloader exited with errors.")
                     status_var.set("Downloader exited with errors.")
 
-            root.after(0, lambda: download_button.config(state=tk.NORMAL))
+            root.after(0, reset_controls)
 
-        threading.Thread(target=worker, daemon=True).start()
+        download_thread = threading.Thread(target=worker, daemon=True)
+        download_thread.start()
 
-    download_button = ttk.Button(root, text="Start Download", command=start_download)
-    download_button.grid(row=2, column=0, pady=(0, 10))
+    controls = ttk.Frame(root)
+    controls.grid(row=2, column=0, pady=(0, 10))
+
+    download_button = ttk.Button(controls, text="Start Download", command=start_download)
+    download_button.grid(row=0, column=0, padx=(0, 8))
+    pause_button = ttk.Button(controls, text="Pause", command=toggle_pause, state=tk.DISABLED)
+    pause_button.grid(row=0, column=1, padx=4)
+    cancel_button = ttk.Button(controls, text="Cancel", command=cancel_download, state=tk.DISABLED)
+    cancel_button.grid(row=0, column=2, padx=(4, 0))
 
     root.mainloop()
 
