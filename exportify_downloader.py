@@ -32,6 +32,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for older Pythons
     import tomli as tomllib
 
 import yt_dlp
+from yt_dlp.utils import sanitize_filename
 from ytmusicapi import YTMusic
 
 
@@ -423,6 +424,7 @@ def download_tracks(
     include_album: bool,
     dry_run: bool,
     search_provider: str,
+    audio_format: str,
     max_downloads_per_hour: int = 100,
     progress_callback: Optional[Callable[[str, int, int, str], None]] = None,
     total_tracks: Optional[int] = None,
@@ -474,6 +476,35 @@ def download_tracks(
 
         query = f"ytsearch5:{terms}"
         display = query
+
+        sanitized_title = sanitize_filename(track.title, restricted=False)
+        skipped_due_to_file = False
+        if sanitized_title:
+            candidate_exts = (
+                [audio_format]
+                if audio_format != "best"
+                else ["mp3", "m4a", "opus", "webm", "mp4", "flac", "wav", "aac"]
+            )
+            for ext in candidate_exts:
+                candidate_path = output_dir / f"{sanitized_title}.{ext}"
+                if candidate_path.exists():
+                    message = (
+                        f"Skipping already downloaded track (file exists): "
+                        f"{candidate_path.name}"
+                    )
+                    print(message)
+                    downloaded_entries.append((candidate_path, track_key))
+                    if track_key:
+                        existing_track_keys.add(track_key)
+                    if progress_callback:
+                        progress_callback(
+                            "finish", index, resolved_total or 0, f"Skipped: {display}"
+                        )
+                    skipped_due_to_file = True
+                    break
+
+        if skipped_due_to_file:
+            continue
 
         if track_key and track_key in existing_track_keys:
             message = f"Skipping already downloaded track: {terms}"
@@ -684,6 +715,7 @@ def run_downloader_for_csv(
             include_album=args.include_album,
             dry_run=args.dry_run,
             search_provider=args.search_provider,
+            audio_format=args.audio_format,
             max_downloads_per_hour=args.max_downloads_per_hour,
             progress_callback=progress_callback,
             total_tracks=len(tracks),
