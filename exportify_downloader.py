@@ -14,13 +14,14 @@ from __future__ import annotations
 import argparse
 import contextlib
 import csv
+import json
 import sys
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Deque, Iterable, List, Optional, Tuple
+from typing import Callable, Deque, Dict, Iterable, List, Optional, Set, Tuple
 
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -58,6 +59,18 @@ class Track:
 
         # Using "audio" at the end helps yt-dlp avoid grabbing music videos.
         return " ".join(parts + ["audio"])
+
+    def identifier(self, include_album: bool) -> str:
+        """Create a stable key for the track to avoid duplicate downloads."""
+
+        if not self.title and not self.artists:
+            return ""
+
+        parts = [self.title.strip().lower(), self.artists.strip().lower()]
+        if include_album and self.album:
+            parts.append(self.album.strip().lower())
+
+        return " | ".join(filter(None, parts))
 
 
 class DownloadCancelled(Exception):
@@ -415,9 +428,12 @@ def download_tracks(
     total_tracks: Optional[int] = None,
     pause_event: Optional[threading.Event] = None,
     cancel_event: Optional[threading.Event] = None,
-) -> List[Path]:
-    downloaded_files: List[Path] = []
+    existing_track_keys: Optional[Set[str]] = None,
+) -> List[Tuple[Path, Optional[str]]]:
+    downloaded_entries: List[Tuple[Path, Optional[str]]] = []
     rate_limiter = DownloadRateLimiter(max_downloads_per_hour)
+
+    existing_track_keys = existing_track_keys or set()
 
     def wait_if_paused() -> None:
         while pause_event and pause_event.is_set():
@@ -450,6 +466,7 @@ def download_tracks(
 
         wait_if_paused()
 
+        track_key = track.identifier(include_album=include_album)
         terms = track.build_terms(include_album=include_album)
         if not terms:
             print("Skipping row with missing track and artist info.")
@@ -457,6 +474,13 @@ def download_tracks(
 
         query = f"ytsearch5:{terms}"
         display = query
+
+        if track_key and track_key in existing_track_keys:
+            message = f"Skipping already downloaded track: {terms}"
+            print(message)
+            if progress_callback:
+                progress_callback("finish", index, resolved_total or 0, f"Skipped: {display}")
+            continue
 
         if ytmusic_client:
             url, matched_title = search_ytmusic(ytmusic_client, terms)
@@ -489,7 +513,9 @@ def download_tracks(
             def record_filepath(entry: dict) -> None:
                 filepath = entry.get("filepath") or entry.get("_filename")
                 if filepath:
-                    downloaded_files.append(Path(filepath))
+                    downloaded_entries.append((Path(filepath), track_key))
+                    if track_key:
+                        existing_track_keys.add(track_key)
 
             if isinstance(info, dict):
                 entries = info.get("entries") if isinstance(info.get("entries"), list) else None
@@ -516,7 +542,44 @@ def download_tracks(
             if progress_callback:
                 progress_callback("error", index, resolved_total or 0, f"Skipped: {display}")
 
-    return downloaded_files
+    return downloaded_entries
+
+
+def resolve_entry_path(path: Path, audio_format: str) -> Path:
+    """Resolve the final audio path for a single downloaded entry."""
+
+    if audio_format == "best":
+        return path
+
+    target_ext = f".{audio_format}"
+    if path.suffix.lower() != target_ext.lower():
+        candidate = path.with_suffix(target_ext)
+        if candidate.exists():
+            return candidate
+
+    return path
+
+
+def load_download_manifest(manifest_path: Path) -> Dict[str, str]:
+    """Load track identifiers mapped to downloaded file paths."""
+
+    if not manifest_path.exists():
+        return {}
+
+    try:
+        with manifest_path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"Could not read manifest {manifest_path}: {exc}")
+        return {}
+
+
+def save_download_manifest(manifest_path: Path, manifest: Dict[str, str]) -> None:
+    """Persist the manifest of downloaded tracks to disk."""
+
+    with manifest_path.open("w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2, ensure_ascii=False)
 
 
 def write_m3u_playlist(playlist_path: Path, downloaded_files: List[Path], output_dir: Path) -> None:
@@ -577,6 +640,19 @@ def run_downloader_for_csv(
     playlist_dir = args.output / csv_path.stem
     playlist_dir.mkdir(parents=True, exist_ok=True)
 
+    manifest_path = playlist_dir / ".downloaded_tracks.json"
+    manifest = load_download_manifest(manifest_path)
+    cleaned_manifest: Dict[str, str] = {}
+    existing_track_keys: Set[str] = set()
+
+    for track_key, stored_path in manifest.items():
+        resolved_path = Path(stored_path)
+        if not resolved_path.is_absolute():
+            resolved_path = playlist_dir / resolved_path
+        if resolved_path.exists():
+            cleaned_manifest[track_key] = stored_path
+            existing_track_keys.add(track_key)
+
     tracks = list(read_tracks(csv_path, args.limit))
     if not tracks:
         print("No tracks found in CSV. Nothing to download.")
@@ -601,7 +677,7 @@ def run_downloader_for_csv(
         playlist_dir, args.audio_format, args.audio_quality, progress_hook
     )
     try:
-        extracted_files = download_tracks(
+        extracted_entries = download_tracks(
             tracks,
             downloader,
             playlist_dir,
@@ -613,18 +689,37 @@ def run_downloader_for_csv(
             total_tracks=len(tracks),
             pause_event=pause_event,
             cancel_event=cancel_event,
+            existing_track_keys=existing_track_keys,
         )
     except DownloadCancelled:
         print("Download cancelled by user.")
         return 1
 
-    for file_path in extracted_files:
+    for file_path, _ in extracted_entries:
         if file_path not in downloaded_files:
             downloaded_files.append(file_path)
+
+    resolved_entries: List[Tuple[Path, Optional[str]]] = []
+    for path, track_key in extracted_entries:
+        final_path = resolve_entry_path(path, args.audio_format)
+        resolved_entries.append((final_path, track_key))
 
     downloaded_files = resolve_final_audio_paths(downloaded_files, args.audio_format)
     playlist_path = playlist_dir / f"{csv_path.stem}.m3u"
     write_m3u_playlist(playlist_path, downloaded_files, playlist_dir)
+
+    for final_path, track_key in resolved_entries:
+        if not track_key or not final_path.exists():
+            continue
+
+        try:
+            stored_path = final_path.relative_to(playlist_dir)
+        except ValueError:
+            stored_path = final_path
+
+        cleaned_manifest[track_key] = str(stored_path)
+
+    save_download_manifest(manifest_path, cleaned_manifest)
     return 0
 
 
