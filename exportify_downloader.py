@@ -125,14 +125,28 @@ class DownloadRateLimiter:
 
 
 class TextRedirector:
-    """Forward stdout/stderr writes into a Tkinter text widget."""
+    """Forward stdout/stderr writes into a Tkinter text widget with styling."""
 
     def __init__(self, widget: tk.Text):
         self.widget = widget
 
+    @staticmethod
+    def _classify(message: str) -> str:
+        lower = message.lower()
+        if "error" in lower or "failed" in lower:
+            return "error"
+        if "warning" in lower:
+            return "warning"
+        if "skipping" in lower or "skip" in lower:
+            return "skip"
+        if "complete" in lower or "downloaded" in lower:
+            return "success"
+        return "info"
+
     def write(self, message: str) -> None:  # pragma: no cover - UI side effect
         def append() -> None:
-            self.widget.insert("end", message)
+            tag = self._classify(message)
+            self.widget.insert("end", message, (tag,))
             self.widget.see("end")
 
         self.widget.after(0, append)
@@ -911,6 +925,12 @@ def launch_gui(defaults: argparse.Namespace) -> None:
     log_frame = ttk.LabelFrame(root, text="Progress", padding=10)
     log_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
 
+    style = ttk.Style()
+    style.theme_use("clam")
+    style.configure("Success.Horizontal.TProgressbar", background="#2da44e", troughcolor="#e5f6e5")
+    style.configure("Error.Horizontal.TProgressbar", background="#d1242f", troughcolor="#fbeae5")
+    style.configure("Active.Horizontal.TProgressbar", background="#218bff", troughcolor="#e7f3ff")
+
     status_var = tk.StringVar(value="Idle")
     ttk.Label(log_frame, textvariable=status_var, anchor="w").pack(fill="x")
 
@@ -918,15 +938,68 @@ def launch_gui(defaults: argparse.Namespace) -> None:
     progress_bar = ttk.Progressbar(log_frame, variable=progress_var, maximum=1)
     progress_bar.pack(fill="x", pady=(4, 8))
 
+    track_list_frame = ttk.Frame(log_frame)
+    track_list_frame.pack(fill="both", expand=False, pady=(0, 8))
+    track_canvas = tk.Canvas(track_list_frame, height=160, highlightthickness=0)
+    track_scrollbar = ttk.Scrollbar(track_list_frame, orient="vertical", command=track_canvas.yview)
+    track_container = ttk.Frame(track_canvas)
+    track_container.bind(
+        "<Configure>", lambda e: track_canvas.configure(scrollregion=track_canvas.bbox("all"))
+    )
+    track_canvas.create_window((0, 0), window=track_container, anchor="nw", tags="track_container")
+    track_canvas.bind(
+        "<Configure>",
+        lambda e: track_canvas.itemconfigure("track_container", width=e.width),
+    )
+    track_canvas.configure(yscrollcommand=track_scrollbar.set)
+    track_canvas.pack(side="left", fill="both", expand=True)
+    track_scrollbar.pack(side="right", fill="y")
+
     log_text = tk.Text(log_frame, wrap="word")
+    log_text.tag_configure("info", foreground="#1f2328")
+    log_text.tag_configure("success", foreground="#2da44e")
+    log_text.tag_configure("warning", foreground="#9a6700")
+    log_text.tag_configure("error", foreground="#d1242f")
+    log_text.tag_configure("skip", foreground="#57606a")
     log_text.pack(fill="both", expand=True)
 
+    track_widgets: Dict[int, Tuple[ttk.Progressbar, tk.DoubleVar, tk.StringVar]] = {}
+
+    def reset_track_statuses() -> None:
+        for child in track_container.winfo_children():
+            child.destroy()
+        track_widgets.clear()
+
+    def ensure_track_widget(
+        index: int, description: str
+    ) -> Tuple[ttk.Progressbar, tk.DoubleVar, tk.StringVar]:
+        truncated = description if len(description) <= 70 else description[:67] + "..."
+        if index not in track_widgets:
+            item = ttk.Frame(track_container, padding=(0, 2))
+            label_var = tk.StringVar(value=f"{index}. {truncated}")
+            ttk.Label(item, textvariable=label_var, anchor="w").pack(fill="x")
+            progress_var = tk.DoubleVar(value=0)
+            bar = ttk.Progressbar(
+                item,
+                variable=progress_var,
+                maximum=1,
+                style="Active.Horizontal.TProgressbar",
+            )
+            bar.pack(fill="x", pady=(0, 2))
+            item.pack(fill="x", anchor="w")
+            track_widgets[index] = (bar, progress_var, label_var)
+        bar, progress_var, label_var = track_widgets[index]
+        label_var.set(f"{index}. {truncated}")
+        return bar, progress_var, label_var
+
     def reset_controls() -> None:
-        pause_event.clear()
-        cancel_event.clear()
         download_button.config(state=tk.NORMAL)
         pause_button.config(state=tk.DISABLED, text="Pause")
         cancel_button.config(state=tk.DISABLED)
+        pause_event.clear()
+        cancel_event.clear()
+        status_var.set("Idle")
+        reset_track_statuses()
 
     def toggle_pause() -> None:
         nonlocal download_thread
@@ -979,6 +1052,7 @@ def launch_gui(defaults: argparse.Namespace) -> None:
         progress_var.set(0)
         status_var.set("Starting...")
         progress_bar.configure(maximum=1)
+        reset_track_statuses()
 
         selected_csvs = [Path(path) for path in csv_paths]
 
@@ -1011,6 +1085,7 @@ def launch_gui(defaults: argparse.Namespace) -> None:
                     progress_bar.configure(maximum=1)
                     progress_var.set(0)
                     status_var.set(f"File {index}/{max(total, 1)}: {description}")
+                    reset_track_statuses()
                     return
 
                 if total <= 0:
@@ -1019,6 +1094,19 @@ def launch_gui(defaults: argparse.Namespace) -> None:
                     total_value = total
 
                 progress_bar.configure(maximum=total_value)
+
+                if event == "start":
+                    track_bar, track_value, _ = ensure_track_widget(index, description)
+                    track_bar.configure(style="Active.Horizontal.TProgressbar", maximum=1)
+                    track_value.set(0)
+                elif event == "finish":
+                    track_bar, track_value, _ = ensure_track_widget(index, description)
+                    track_bar.configure(style="Success.Horizontal.TProgressbar", maximum=1)
+                    track_value.set(1)
+                elif event == "error":
+                    track_bar, track_value, _ = ensure_track_widget(index, description)
+                    track_bar.configure(style="Error.Horizontal.TProgressbar", maximum=1)
+                    track_value.set(1)
 
                 if event == "start":
                     progress_var.set(max(index - 1, 0))
