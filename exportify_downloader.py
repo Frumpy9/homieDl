@@ -335,6 +335,9 @@ def read_tracks(csv_path: Path, limit: Optional[int]) -> Iterable[Track]:
             yield track
 
 
+MAX_AUDIO_FILESIZE = 100 * 1024 * 1024  # 100 MB ceiling per track
+
+
 def build_downloader(
     output_dir: Path,
     audio_format: str,
@@ -344,7 +347,10 @@ def build_downloader(
     """Create a configured YoutubeDL instance for audio downloads."""
 
     ydl_opts = {
-        "format": "bestaudio/best",
+        "format": (
+            "bestaudio[filesize<={limit}]/"
+            "bestaudio[filesize_approx<={limit}]"
+        ).format(limit=MAX_AUDIO_FILESIZE),
         "noplaylist": True,
         "outtmpl": str(output_dir / "%(title)s.%(ext)s"),
         "quiet": False,
@@ -353,6 +359,10 @@ def build_downloader(
         "embedthumbnail": True,
         "writethumbnail": True,
         "progress_hooks": [progress_hook],
+        "match_filter": yt_dlp.utils.match_filter_func(
+            f"(filesize?filesize<={MAX_AUDIO_FILESIZE}:True)&"
+            f"(filesize_approx?filesize_approx<={MAX_AUDIO_FILESIZE}:True)"
+        ),
     }
 
     postprocessors = [
