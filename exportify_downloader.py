@@ -579,6 +579,8 @@ def run_downloader(
         if progress_callback:
             progress_callback("file", file_index, total_files, str(csv_path))
         result = run_downloader_for_csv(csv_path, args, progress_callback=progress_callback)
+        if progress_callback:
+            progress_callback("file-done", file_index, total_files, str(csv_path))
         if result != 0:
             status = result
 
@@ -595,6 +597,7 @@ def launch_gui(defaults: argparse.Namespace) -> None:
     csv_paths: List[str] = [str(path) for path in getattr(defaults, "csv_files", [])] or (
         [str(defaults.csv_file)] if getattr(defaults, "csv_file", None) else []
     )
+    csv_state = {path: False for path in csv_paths}
     csv_display_var = tk.StringVar()
     output_var = tk.StringVar(value=str(defaults.output) if defaults.output else "")
     limit_var = tk.StringVar(value=str(defaults.limit or ""))
@@ -606,7 +609,16 @@ def launch_gui(defaults: argparse.Namespace) -> None:
     max_per_hour_var = tk.StringVar(value=str(defaults.max_downloads_per_hour))
 
     def refresh_csv_display() -> None:
-        display_value = "\n".join(csv_paths) if csv_paths else "No CSVs selected."
+        if not csv_paths:
+            csv_display_var.set("No CSVs selected.")
+            return
+
+        lines = []
+        for path in csv_paths:
+            prefix = "✔" if csv_state.get(path) else "•"
+            lines.append(f"{prefix} {path}")
+
+        display_value = "\n".join(lines)
         csv_display_var.set(display_value)
 
     def browse_csvs() -> None:
@@ -617,10 +629,12 @@ def launch_gui(defaults: argparse.Namespace) -> None:
             for path in paths:
                 if path not in csv_paths:
                     csv_paths.append(path)
+                    csv_state[path] = False
             refresh_csv_display()
 
     def clear_csvs() -> None:
         csv_paths.clear()
+        csv_state.clear()
         refresh_csv_display()
 
     refresh_csv_display()
@@ -723,6 +737,9 @@ def launch_gui(defaults: argparse.Namespace) -> None:
         progress_bar.configure(maximum=1)
 
         selected_csvs = [Path(path) for path in csv_paths]
+        for path in csv_paths:
+            csv_state[path] = False
+        refresh_csv_display()
 
         args = argparse.Namespace(
             csv_files=selected_csvs,
@@ -751,6 +768,14 @@ def launch_gui(defaults: argparse.Namespace) -> None:
                     progress_bar.configure(maximum=1)
                     progress_var.set(0)
                     status_var.set(f"File {index}/{max(total, 1)}: {description}")
+                    return
+
+                if event == "file-done":
+                    csv_state[description] = True
+                    refresh_csv_display()
+                    progress_bar.configure(maximum=max(total, 1))
+                    progress_var.set(index)
+                    status_var.set(f"Finished file {index}/{max(total, 1)}: {description}")
                     return
 
                 if total <= 0:
