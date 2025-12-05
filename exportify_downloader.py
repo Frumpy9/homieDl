@@ -941,16 +941,46 @@ def launch_gui(defaults: argparse.Namespace) -> None:
     track_list_frame = ttk.Frame(log_frame)
     track_list_frame.pack(fill="both", expand=False, pady=(0, 8))
     track_canvas = tk.Canvas(track_list_frame, height=160, highlightthickness=0)
-    track_scrollbar = ttk.Scrollbar(track_list_frame, orient="vertical", command=track_canvas.yview)
+    track_auto_scroll = tk.BooleanVar(value=True)
+
+    def update_auto_scroll_state() -> None:
+        _, last = track_canvas.yview()
+        track_auto_scroll.set(abs(1.0 - last) < 0.01)
+
+    def scroll_to_bottom_if_needed() -> None:
+        if track_auto_scroll.get():
+            track_canvas.yview_moveto(1.0)
+
+    def scroll_via_scrollbar(*args) -> None:
+        track_canvas.yview(*args)
+        update_auto_scroll_state()
+
+    track_scrollbar = ttk.Scrollbar(track_list_frame, orient="vertical", command=scroll_via_scrollbar)
     track_container = ttk.Frame(track_canvas)
     track_container.bind(
-        "<Configure>", lambda e: track_canvas.configure(scrollregion=track_canvas.bbox("all"))
+        "<Configure>", lambda e: (track_canvas.configure(scrollregion=track_canvas.bbox("all")), scroll_to_bottom_if_needed())
     )
     track_canvas.create_window((0, 0), window=track_container, anchor="nw", tags="track_container")
     track_canvas.bind(
         "<Configure>",
         lambda e: track_canvas.itemconfigure("track_container", width=e.width),
     )
+    def on_mousewheel(event) -> str:
+        delta = int(-1 * (event.delta / 120)) if event.delta else 0
+        if delta:
+            track_canvas.yview_scroll(delta, "units")
+            update_auto_scroll_state()
+        return "break"
+
+    def on_mousewheel_linux(event) -> str:
+        delta = -1 if event.num == 5 else 1
+        track_canvas.yview_scroll(delta, "units")
+        update_auto_scroll_state()
+        return "break"
+
+    track_canvas.bind("<MouseWheel>", on_mousewheel)
+    track_canvas.bind("<Button-4>", on_mousewheel_linux)
+    track_canvas.bind("<Button-5>", on_mousewheel_linux)
     track_canvas.configure(yscrollcommand=track_scrollbar.set)
     track_canvas.pack(side="left", fill="both", expand=True)
     track_scrollbar.pack(side="right", fill="y")
@@ -969,6 +999,8 @@ def launch_gui(defaults: argparse.Namespace) -> None:
         for child in track_container.winfo_children():
             child.destroy()
         track_widgets.clear()
+        track_auto_scroll.set(True)
+        scroll_to_bottom_if_needed()
 
     def ensure_track_widget(
         index: int, description: str
@@ -988,6 +1020,7 @@ def launch_gui(defaults: argparse.Namespace) -> None:
             bar.pack(fill="x", pady=(0, 2))
             item.pack(fill="x", anchor="w")
             track_widgets[index] = (bar, progress_var, label_var)
+            root.after_idle(scroll_to_bottom_if_needed)
         bar, progress_var, label_var = track_widgets[index]
         label_var.set(f"{index}. {truncated}")
         return bar, progress_var, label_var
