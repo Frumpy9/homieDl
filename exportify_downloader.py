@@ -701,7 +701,7 @@ def create_backup_m3u_from_downloads(
         log(f"No MP3 files found in {playlist_dir}; skipping backup playlist creation.")
         return
 
-    backup_playlist = playlist_dir / f"{csv_path.stem}_backup.m3u"
+    backup_playlist = playlist_dir / f"{csv_path.stem}.m3u"
     write_m3u_playlist(backup_playlist, mp3_files, playlist_dir)
 
 
