@@ -423,6 +423,10 @@ def build_downloader(
             "key": "FFmpegMetadata",
         },
         {
+            "key": "FFmpegThumbnailsConvertor",
+            "format": "jpg",
+        },
+        {
             "key": "EmbedThumbnail",
         },
     ]
