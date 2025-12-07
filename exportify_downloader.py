@@ -167,28 +167,48 @@ class TextRedirector:
 class SquareThumbnailCropper(PostProcessor):
     """Crop downloaded thumbnails to centered squares before embedding."""
 
-    def run(self, info: Dict) -> Tuple[List[str], Dict]:  # type: ignore[override]
-        thumbnail_path = info.get("_thumbnail_filename")
-        if not thumbnail_path:
-            return [], info
-
-        path = Path(thumbnail_path)
+    def _crop(self, path: Path) -> Optional[Tuple[int, int]]:
         if not path.exists():
-            return [], info
+            return None
 
         try:
             with Image.open(path) as image:
                 width, height = image.size
                 if width == height:
-                    return [], info
+                    return width, height
 
                 side = min(width, height)
                 left = (width - side) // 2
                 top = (height - side) // 2
                 cropped = image.crop((left, top, left + side, top + side))
                 cropped.save(path, format=image.format or "JPEG")
+                return side, side
         except Exception as exc:  # pragma: no cover - runtime safety
             self.to_screen(f"SquareThumbnailCropper: could not crop {path}: {exc}")
+            return None
+
+    def run(self, info: Dict) -> Tuple[List[str], Dict]:  # type: ignore[override]
+        seen: Set[Path] = set()
+
+        for thumb in info.get("thumbnails") or []:
+            filepath = thumb.get("filepath")
+            if not filepath:
+                continue
+
+            path = Path(filepath)
+            if path in seen:
+                continue
+            seen.add(path)
+
+            cropped_size = self._crop(path)
+            if cropped_size:
+                thumb["width"], thumb["height"] = cropped_size
+
+        thumbnail_path = info.get("_thumbnail_filename")
+        if thumbnail_path:
+            path = Path(thumbnail_path)
+            if path not in seen:
+                self._crop(path)
 
         return [], info
 
