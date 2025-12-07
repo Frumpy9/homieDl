@@ -26,12 +26,21 @@ from typing import Callable, Deque, Dict, Iterable, List, Optional, Set, Tuple
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+from PIL import Image
+
 try:
     import tomllib  # Python 3.11+
 except ModuleNotFoundError:  # pragma: no cover - fallback for older Pythons
     import tomli as tomllib
 
 import yt_dlp
+from yt_dlp.postprocessor import (
+    EmbedThumbnailPP,
+    FFmpegExtractAudioPP,
+    FFmpegMetadataPP,
+    FFmpegThumbnailsConvertorPP,
+)
+from yt_dlp.postprocessor.common import PostProcessor
 from yt_dlp.utils import sanitize_filename
 from ytmusicapi import YTMusic
 
@@ -153,6 +162,35 @@ class TextRedirector:
 
     def flush(self) -> None:
         return
+
+
+class SquareThumbnailCropper(PostProcessor):
+    """Crop downloaded thumbnails to centered squares before embedding."""
+
+    def run(self, info: Dict) -> Tuple[List[str], Dict]:  # type: ignore[override]
+        thumbnail_path = info.get("_thumbnail_filename")
+        if not thumbnail_path:
+            return [], info
+
+        path = Path(thumbnail_path)
+        if not path.exists():
+            return [], info
+
+        try:
+            with Image.open(path) as image:
+                width, height = image.size
+                if width == height:
+                    return [], info
+
+                side = min(width, height)
+                left = (width - side) // 2
+                top = (height - side) // 2
+                cropped = image.crop((left, top, left + side, top + side))
+                cropped.save(path, format=image.format or "JPEG")
+        except Exception as exc:  # pragma: no cover - runtime safety
+            self.to_screen(f"SquareThumbnailCropper: could not crop {path}: {exc}")
+
+        return [], info
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -411,39 +449,37 @@ def build_downloader(
         "outtmpl": str(output_dir / "%(title)s.%(ext)s"),
         "quiet": False,
         "ignoreerrors": True,
-        "addmetadata": True,
-        "embedthumbnail": True,
         "writethumbnail": True,
         "progress_hooks": [progress_hook],
         "match_filter": enforce_filesize_limit,
     }
 
-    postprocessors = [
-        {
-            "key": "FFmpegMetadata",
-        },
-        {
-            "key": "FFmpegThumbnailsConvertor",
-            "format": "jpg",
-        },
-        {
-            "key": "EmbedThumbnail",
-        },
-    ]
+    downloader = yt_dlp.YoutubeDL(ydl_opts)
+
+    postprocessors: List[PostProcessor] = []
 
     if audio_format != "best":
-        postprocessors.insert(
-            0,
-            {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": audio_format,
-                "preferredquality": audio_quality,
-            },
+        postprocessors.append(
+            FFmpegExtractAudioPP(
+                downloader,
+                preferredcodec=audio_format,
+                preferredquality=audio_quality,
+            )
         )
 
-    ydl_opts["postprocessors"] = postprocessors
+    postprocessors.extend(
+        [
+            FFmpegMetadataPP(downloader),
+            FFmpegThumbnailsConvertorPP(downloader, format="jpg"),
+            SquareThumbnailCropper(downloader),
+            EmbedThumbnailPP(downloader),
+        ]
+    )
 
-    return yt_dlp.YoutubeDL(ydl_opts)
+    for postprocessor in postprocessors:
+        downloader.add_post_processor(postprocessor)
+
+    return downloader
 
 
 def search_ytmusic(ytmusic: YTMusic, terms: str) -> Tuple[Optional[str], Optional[str]]:
